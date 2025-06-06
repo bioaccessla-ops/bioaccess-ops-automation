@@ -116,5 +116,3 @@ Every new branch should be created from the `develop` branch and must use a pref
 ## Contributing
 
 Contributions are welcome! Please read our `CONTRIBUTING.md` guide (link to be added) to understand our coding standards and the full pull request process.
-
-
