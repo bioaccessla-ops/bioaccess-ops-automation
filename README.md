@@ -182,5 +182,5 @@ Every new branch should be created from the `develop` branch and must use a pref
     * *Example:* `docs/add-contributing-guide`
 
 * **`chore/`**: For repository maintenance tasks that do not affect production code.
-    * *Example:* `chore/update-clasp-version`
+    * *Example:* `chore/update-clasp-version
 
