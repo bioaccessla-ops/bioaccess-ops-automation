@@ -4,6 +4,8 @@ import logging
 import time
 import random
 from googleapiclient.errors import HttpError
+from src.config import ROLE_MAP
+
 
 def get_file_permissions(drive_service, file_id, max_retries=5):
     """
@@ -127,7 +129,7 @@ def generate_permission_report(drive_service, folder_id, user_email=None):
                 'Owner': owner,
                 'Principal Type': p.get('type'),
                 'Email Address': p.get('emailAddress') or p.get('domain') or ('anyoneWithLink' if p.get('type') == 'anyone' else 'N/A'),
-                'Role': p.get('role'),
+                 'Role': ROLE_MAP.get(p.get('role'), str(p.get('role')).capitalize()),
                 'Allow Discovery': p.get('allowFileDiscovery', 'N/A'),
                 'Expiration Time': p.get('expirationTime', 'N/A'),
                 'Google Drive URL': item.get('webViewLink'),
