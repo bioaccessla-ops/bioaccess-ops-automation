@@ -6,7 +6,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
-import tempfile # Still needed for other temp file uses, but not for rollback action processing
+import tempfile
+from googleapiclient.errors import HttpError
 
 # Imports from the 'src' package
 from src.auth import authenticate_and_get_service
@@ -122,6 +123,20 @@ def main():
         write_report_to_csv(pre_apply_report_data, archive_path)
         logging.info(f"Successfully created pre-apply changes archive: {archive_path}")
 
+        if is_dry_run:
+            logging.info(f"--- Running 'apply-changes' in DRY RUN mode from file: {args.input} ---")
+        else:
+            print("\n!!! WARNING: YOU ARE ABOUT TO MAKE LIVE CHANGES !!!")
+            print("This cannot be undone. Please review your Excel file carefully.")
+            confirm = input(f"Are you sure you want to apply changes from '{args.input}'? (type 'yes' to proceed): ").strip()
+            if confirm.lower() not in ['y', 'yes']:
+                logging.warning("Live run cancelled by user.")
+                return
+            logging.info(f"--- Starting 'apply-changes' in LIVE mode from file: {args.input} ---")
+        
+        # process_changes already logs its own 'Starting Live Mode' message
+        # audit_trail_data is already populated from the call above
+        
         # --- LOG: Apply Changes Audit ---
         log_filename = f"{timestamp}_apply_{root_folder_name}_audit.csv"
         log_path = os.path.join('logs', log_filename)
@@ -173,13 +188,14 @@ def main():
                 return
             logging.info(f"--- Rollback is in LIVE mode. Changes WILL be applied to Google Drive. ---")
 
+        # --- Generate Rollback Actions ---
         try:
             # Generate the inverse actions directly from the audit log
             # This function returns a list of dictionaries formatted for process_changes
             rollback_actions = generate_rollback_actions(
                 drive_service=service, 
-                root_folder_id=actual_root_id, # Pass actual_root_id to generate rollback actions
-                audit_log_path=args.from_log # This audit log is the source for what to reverse
+                root_folder_id=actual_root_id,
+                audit_log_path=args.from_log
             )
         except Exception as e:
             logging.error(f"Failed to generate rollback actions: {e}")
@@ -189,13 +205,25 @@ def main():
             logging.info("No actions needed for rollback. Current state matches backup derived from log.")
             return
             
-        # --- EXECUTE ROLLBACK ACTIONS ---
-        # Call process_changes directly with the list of actions
-        audit_trail_data_rollback = process_changes(
-            drive_service=service, 
-            actions_list=rollback_actions, # Pass the list of actions directly
-            dry_run=is_dry_run
-        )
+        # Write generated rollback actions to a temporary Excel file
+        temp_excel_file_path = os.path.join(tempfile.gettempdir(), f'temp_rollback_actions_{timestamp}.xlsx')
+        try:
+            temp_df = pd.DataFrame(rollback_actions)
+            action_builder_cols = [
+                'Item ID', 'Action_Type', 'New_Role', 'Type (for ADD)', 'Email/Domain (for ADD)',
+                'Principal Type', 'Email Address', 'Role', 'Full Path', 'Item Name', 'Owner', 'Google Drive URL', 'Root Folder ID'
+            ]
+            temp_df = temp_df.reindex(columns=action_builder_cols).fillna('')
+            
+            temp_df.to_excel(temp_excel_file_path, index=False, engine='openpyxl')
+        except Exception as e:
+            logging.error(f"Failed to write temporary rollback file: {e}")
+            return
+            
+        # Call process_changes with the temporary Excel file
+        audit_trail_data_rollback, _ = process_changes(drive_service=service, input_excel_path=temp_excel_file_path, dry_run=is_dry_run)
+        os.remove(temp_excel_file_path)
+        logging.info(f"Temporary rollback file deleted: {temp_excel_file_path}")
         
         # --- LOG: Rollback Audit ---
         log_filename = f"{timestamp}_rollback_{root_folder_name}_audit.csv"

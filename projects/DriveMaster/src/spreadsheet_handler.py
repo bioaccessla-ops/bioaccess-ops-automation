@@ -21,10 +21,25 @@ def write_report_to_csv(report_data, filename):
 
 def save_audit_log(audit_data, filename):
     """Saves the audit trail (list of dicts) to a CSV log file."""
+    logging.info(f"Attempting to save audit log: {filename}")
+    #print(f"--- DEBUG: save_audit_log received data length: {len(audit_data)} ---") # Add this
+
+    # --- ADD THIS PRINT STATEMENT ---
+    #print(f"--- DEBUG: Raw audit_data content:\n{audit_data} ---") 
+    # --------------------------------
+    
     if not audit_data:
-        logging.warning("No audit data to write to log file.")
+        logging.warning("No audit data to write to log file. (Check in save_audit_log)")
         return
     try:
+        df = pd.DataFrame(audit_data)
+        #print(f"--- DEBUG: DataFrame created. Columns: {df.columns.tolist()} ---") # Add this
+        #print(f"--- DEBUG: DataFrame head:\n{df.head().to_string()} ---") # Add this
+        
+        if df.empty: # This check would have been hit if df was empty
+            logging.warning("Audit DataFrame is empty after conversion. (Check in save_audit_log)")
+            return
+
         df = pd.DataFrame(audit_data)
         # Ensure consistent column order for readability in log files
         log_column_order = [
