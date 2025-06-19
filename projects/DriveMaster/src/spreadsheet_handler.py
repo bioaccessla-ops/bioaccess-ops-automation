@@ -1,7 +1,11 @@
+# src/spreadsheet_handler.py
 import pandas as pd
 import logging
 from openpyxl import load_workbook
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.styles import PatternFill
+from openpyxl.formatting.rule import Rule, FormulaRule
+from openpyxl.styles.colors import Color
 
 def write_report_to_csv(report_data, filename):
     """Writes report data to a CSV file. Used for backups."""
@@ -15,33 +19,64 @@ def write_report_to_csv(report_data, filename):
         logging.error(f"Failed to write backup CSV to {filename}: {e}")
 
 
+def save_audit_log(audit_data, filename):
+    """Saves the audit trail (list of dicts) to an Excel log file."""
+    if not audit_data:
+        logging.warning("No audit data to write to log file.")
+        return
+    try:
+        df = pd.DataFrame(audit_data)
+        # Ensure consistent column order for readability in log files
+        log_column_order = [
+            'Timestamp', 'Item ID', 'Action_Command', 'Status', 'Details',
+            'Original_Principal_Type', 'Original_Email_Address', 'Original_Role',
+            'New_Principal_Type', 'New_Email_Address', 'New_Role'
+        ]
+        df = df.reindex(columns=[col for col in log_column_order if col in df.columns])
+        
+        df.to_excel(filename, index=False, engine='utf-8')
+        logging.info(f"Audit log successfully written to {filename}")
+    except Exception as e:
+        logging.error(f"Failed to write audit log to {filename}: {e}")
+
+
 def add_dropdowns_to_sheet(filename):
-    """Opens an existing Excel file and adds Data Validation dropdowns."""
+    """Opens an existing Excel file and adds Data Validation dropdowns and Conditional Formatting."""
     try:
         wb = load_workbook(filename)
         ws = wb.active
 
-        # --- CORRECTED: Define Data Validation rules ---
-        # The formula must be a string containing comma-separated values, enclosed in double quotes.
         dv_action = DataValidation(type="list", formula1='"MODIFY,REMOVE,ADD"', allow_blank=True)
         dv_role = DataValidation(type="list", formula1='"Viewer,Commenter,Editor"', allow_blank=True)
         dv_principal = DataValidation(type="list", formula1='"user,group,domain"', allow_blank=True)
 
-        # Add the validation rules to the worksheet object
+        dv_action.add('I2:I1048576')
+        dv_role.add('J2:J1048576')
+        dv_principal.add('K2:K1048576')
+        
         ws.add_data_validation(dv_action)
         ws.add_data_validation(dv_role)
         ws.add_data_validation(dv_principal)
 
-        # --- Specify the cell ranges for the dropdowns ---
-        # Applies the validation to all rows from row 2 downwards in the specified columns
-        dv_action.add('I2:I1048576')      # Column I for Action_Type
-        dv_role.add('J2:J1048576')        # Column J for New_Role
-        dv_principal.add('K2:K1048576')   # Column K for Add_Principal_Type
+        fill_add = PatternFill(start_color=Color("FFD8E9BB"), end_color=Color("FFD8E9BB"), fill_type="solid")
+        fill_remove = PatternFill(start_color=Color("FFFFC7CE"), end_color=Color("FFFFC7CE"), fill_type="solid")
+        fill_modify = PatternFill(start_color=Color("FFFFEB9C"), end_color=Color("FFFFEB9C"), fill_type="solid")
+
+        full_range = 'A2:K1048576' 
+
+        rule_add = FormulaRule(formula=['=$I2="ADD"'], fill=fill_add)
+        ws.conditional_formatting.add(full_range, rule_add)
+
+        rule_remove = FormulaRule(formula=['=$I2="REMOVE"'], fill=fill_remove)
+        ws.conditional_formatting.add(full_range, rule_remove)
+
+        rule_modify = FormulaRule(formula=['=$I2="MODIFY"'], fill=fill_modify)
+        ws.conditional_formatting.add(full_range, rule_modify)
 
         wb.save(filename)
-        logging.info(f"Successfully added dropdown menus to {filename}")
+        logging.info(f"Successfully added dropdown menus and conditional formatting to {filename}")
     except Exception as e:
-        logging.error(f"Could not add dropdown menus to {filename}. Reason: {e}")
+        logging.error(f"Could not add dropdown menus or conditional formatting to {filename}. Reason: {e}")
 
 
 def write_report_to_excel(report_data, filename):
@@ -52,7 +87,7 @@ def write_report_to_excel(report_data, filename):
     try:
         df = pd.DataFrame(report_data)
         
-        action_columns = ['Action_Type', 'New_Role', 'Add_Principal_Type', 'Add_Principal_Address']
+        action_columns = ['Action_Type', 'New_Role', 'Type (for ADD)', 'Email/Domain (for ADD)']
         for col in action_columns:
             df[col] = ''
         
@@ -63,10 +98,8 @@ def write_report_to_excel(report_data, filename):
         
         df = df.reindex(columns=[col for col in column_order if col in df.columns])
 
-        # Step 1: Pandas writes the data
         df.to_excel(filename, index=False, engine='openpyxl')
         
-        # Step 2: Openpyxl adds the dropdowns to the file that was just saved
         add_dropdowns_to_sheet(filename)
         
     except Exception as e:
