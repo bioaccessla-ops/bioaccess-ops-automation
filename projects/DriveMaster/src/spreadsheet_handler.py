@@ -20,7 +20,7 @@ def write_report_to_csv(report_data, filename):
 
 
 def save_audit_log(audit_data, filename):
-    """Saves the audit trail (list of dicts) to an Excel log file."""
+    """Saves the audit trail (list of dicts) to a CSV log file."""
     if not audit_data:
         logging.warning("No audit data to write to log file.")
         return
@@ -28,13 +28,13 @@ def save_audit_log(audit_data, filename):
         df = pd.DataFrame(audit_data)
         # Ensure consistent column order for readability in log files
         log_column_order = [
-            'Timestamp', 'Item ID', 'Action_Command', 'Status', 'Details',
+            'Timestamp', 'Root Folder ID', 'Item ID', 'Action_Command', 'Status', 'Details', # Added Root Folder ID
             'Original_Principal_Type', 'Original_Email_Address', 'Original_Role',
             'New_Principal_Type', 'New_Email_Address', 'New_Role'
         ]
         df = df.reindex(columns=[col for col in log_column_order if col in df.columns])
         
-        df.to_excel(filename, index=False, engine='utf-8')
+        df.to_csv(filename, index=False, encoding='utf-8')
         logging.info(f"Audit log successfully written to {filename}")
     except Exception as e:
         logging.error(f"Failed to write audit log to {filename}: {e}")
@@ -50,9 +50,12 @@ def add_dropdowns_to_sheet(filename):
         dv_role = DataValidation(type="list", formula1='"Viewer,Commenter,Editor"', allow_blank=True)
         dv_principal = DataValidation(type="list", formula1='"user,group,domain"', allow_blank=True)
 
-        dv_action.add('I2:I1048576')
-        dv_role.add('J2:J1048576')
-        dv_principal.add('K2:K1048576')
+        # Columns for Data Validation: I, J, K
+        # Root Folder ID is now column I, so action builder columns shift
+        # Action_Type will be J, New_Role will be K, Add_Principal_Type will be L
+        dv_action.add('J2:J1048576')      # Column J for Action_Type
+        dv_role.add('K2:K1048576')        # Column K for New_Role
+        dv_principal.add('L2:L1048576')   # Column L for Type (for ADD)
         
         ws.add_data_validation(dv_action)
         ws.add_data_validation(dv_role)
@@ -62,15 +65,18 @@ def add_dropdowns_to_sheet(filename):
         fill_remove = PatternFill(start_color=Color("FFFFC7CE"), end_color=Color("FFFFC7CE"), fill_type="solid")
         fill_modify = PatternFill(start_color=Color("FFFFEB9C"), end_color=Color("FFFFEB9C"), fill_type="solid")
 
-        full_range = 'A2:K1048576' 
+        # Adjust full_range to include the new column
+        # Assuming Root Folder ID is the 9th column (I), so Action_Type is now 10th (J)
+        full_range = 'A2:L1048576' # Extend to column L (12th column)
 
-        rule_add = FormulaRule(formula=['=$I2="ADD"'], fill=fill_add)
+        # Corrected formulas to reference new column index for Action_Type (J)
+        rule_add = FormulaRule(formula=['=$J2="ADD"'], fill=fill_add) # <--- Changed to J
         ws.conditional_formatting.add(full_range, rule_add)
 
-        rule_remove = FormulaRule(formula=['=$I2="REMOVE"'], fill=fill_remove)
+        rule_remove = FormulaRule(formula=['=$J2="REMOVE"'], fill=fill_remove) # <--- Changed to J
         ws.conditional_formatting.add(full_range, rule_remove)
 
-        rule_modify = FormulaRule(formula=['=$I2="MODIFY"'], fill=fill_modify)
+        rule_modify = FormulaRule(formula=['=$J2="MODIFY"'], fill=fill_modify) # <--- Changed to J
         ws.conditional_formatting.add(full_range, rule_modify)
 
         wb.save(filename)
@@ -87,13 +93,15 @@ def write_report_to_excel(report_data, filename):
     try:
         df = pd.DataFrame(report_data)
         
+        # Add the new Action Builder columns based on new position
         action_columns = ['Action_Type', 'New_Role', 'Type (for ADD)', 'Email/Domain (for ADD)']
         for col in action_columns:
             df[col] = ''
         
+        # Update column_order to include 'Root Folder ID'
         column_order = [
             'Full Path', 'Item Name', 'Item ID', 'Role', 'Principal Type', 
-            'Email Address', 'Owner', 'Google Drive URL'
+            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID' # <--- NEW COLUMN ADDED HERE
         ] + action_columns
         
         df = df.reindex(columns=[col for col in column_order if col in df.columns])
