@@ -1,0 +1,6 @@
+Timestamp,Root Folder ID,Item ID,Action_Command,Status,Details,Original_Principal_Type,Original_Email_Address,Original_Role,New_Principal_Type,New_Email_Address,New_Role
+2025-06-19 15:06:30,1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw,1jPqgww8lNGleK7h15iHuNdyUbZDf0idz,MODIFY,SUCCESS,Modified bioaccessla.com from Commenter to Editor.,Domain,bioaccessla.com,Commenter,,,Editor
+2025-06-19 15:06:31,1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw,1jPqgww8lNGleK7h15iHuNdyUbZDf0idz,REMOVE,SUCCESS,Removed ernie.moreno62@gmail.com as Viewer.,User,ernie.moreno62@gmail.com,Viewer,,,
+2025-06-19 15:06:32,1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw,1O90b5jSuK3lIz-RYZIEtAAlA3-IQ_vmxgulyB_6vY2U,MODIFY,SUCCESS,Modified ernie.moreno62@gmail.com from Commenter to Editor.,User,ernie.moreno62@gmail.com,Commenter,,,Editor
+2025-06-19 15:06:33,1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw,1Wan1C_Cxndc2M6yXKa8vxJLXCgYoBXFzDVwRYAfGbVY,ADD,SUCCESS,Added devassistai@gmail.com as Viewer.,,,,user,devassistai@gmail.com,Viewer
+2025-06-19 15:06:34,1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw,1Wan1C_Cxndc2M6yXKa8vxJLXCgYoBXFzDVwRYAfGbVY,ADD,SUCCESS,Added Jesus_test_group@bioaccessla.com as Editor.,,,,group,Jesus_test_group@bioaccessla.com,Editor
