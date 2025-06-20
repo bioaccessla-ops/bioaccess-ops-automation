@@ -1,5 +1,6 @@
-Full Path,Item Name,Item ID,Role,Principal Type,Email Address,Owner,Google Drive URL,ACTION
-"/Python_Admin_Tool_TESTING/Test Doc 1","Test Doc 1","1O90b5jSuK3lIz-RYZIEtAAlA3-IQ_vmxgulyB_6vY2U",,,,"jmoreno@bioaccessla.com","https://...","ADD:user:devassistai@gmail.com:writer"
-"/Python_Admin_Tool_TESTING/Test Doc 1","Test Doc 1","1O90b5jSuK3lIz-RYZIEtAAlA3-IQ_vmxgulyB_6vY2U",,,,"jmoreno@bioaccessla.com","https://...","ADD:user:jmoreno@bioaccessla.com:commenter"
-"/Python_Admin_Tool_TESTING/Sub-Folder 1/Test Sheet 2","Test Sheet 2","1Wan1C_Cxndc2M6yXKa8vxJLXCgYoBXFzDVwRYAfGbVY",,,,"jmoreno@bioaccessla.com","https://...","ADD:group:Jesus_test_group@bioaccessla.com:reader"
-"/Python_Admin_Tool_TESTING/Sub-Folder 1/Test Sheet 2","Test Sheet 2","1Wan1C_Cxndc2M6yXKa8vxJLXCgYoBXFzDVwRYAfGbVY",,,,"jmoreno@bioaccessla.com","https://...","ADD:domain:bioaccessla.com:commenter"
+Full Path,Item Name,Item ID,Role,Principal Type,Email Address,Owner,Google Drive URL,Action_Type,New_Role,Type (for ADD),Email/Domain (for ADD)
+"/Python_Admin_Tool_TESTING/Test Doc 1","Test Doc 1","1O90b5jSuK3lIz-RYZIEtAAlA3-IQ_vmxgulyB_6vY2U",writer,user,"ernie.moreno62@gmail.com","jmoreno@bioaccessla.com","https://...","MODIFY",Commenter,,
+"/Python_Admin_Tool_TESTING/Sub-Folder 1","Sub-Folder 1","1jPqgww8lNGleK7h15iHuNdyUbZDf0idz",reader,user,"ernie.moreno62@gmail.com","jmoreno@bioaccessla.com","https://...","REMOVE",,,
+"/Python_Admin_Tool_TESTING/Sub-Folder 1/Test Sheet 2","Test Sheet 2","1Wan1C_Cxndc2M6yXKa8vxJLXCgYoBXFzDVwRYAfGbVY",,,,"jmoreno@bioaccessla.com","https://...","ADD",Viewer,user,devassistai@gmail.com
+"/Python_Admin_Tool_TESTING/Sub-Folder 1/Test Sheet 2","Test Sheet 2","1Wan1C_Cxndc2M6yXKa8vxJLXCgYoBXFzDVwRYAfGbVY",,,,"jmoreno@bioaccessla.com","https://...","ADD",Editor,group,Jesus_test_group@bioaccessla.com
+"/Python_Admin_Tool_TESTING/Sub-Folder 1","Sub-Folder 1","1jPqgww8lNGleK7h15iHuNdyUbZDf0idz",reader,domain,"bioaccessla.com","jmoreno@bioaccessla.com","https://...","MODIFY",Commenter,,
