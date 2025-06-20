@@ -34,8 +34,6 @@ def save_audit_log(audit_data, filename):
             logging.warning("Audit DataFrame is empty after conversion.")
             return
 
-        # *** START: MODIFIED SECTION ***
-        # Define the complete and ordered list of columns for the audit log.
         log_column_order = [
             'Timestamp', 
             'Root Folder ID', 
@@ -53,10 +51,7 @@ def save_audit_log(audit_data, filename):
             'New_Role'
         ]
         
-        # Reindex the DataFrame to ensure consistent column order.
-        # This will add any missing columns with blank values.
         df = df.reindex(columns=log_column_order)
-        # *** END: MODIFIED SECTION ***
         
         df.to_csv(filename, index=False, encoding='utf-8')
         logging.info(f"Audit log successfully written to {filename}")
@@ -74,8 +69,7 @@ def add_dropdowns_to_sheet(filename):
         dv_role = DataValidation(type="list", formula1='"Viewer,Commenter,Editor"', allow_blank=True)
         dv_principal = DataValidation(type="list", formula1='"user,group,domain"', allow_blank=True)
 
-        # Columns for Data Validation: J, K, L
-        # Action_Type is J, New_Role is K, Type (for ADD) is L
+        # Columns for Data Validation: J, K, L (Correct for 9 data columns)
         dv_action.add('J2:J1048576')      # Column J for Action_Type
         dv_role.add('K2:K1048576')        # Column K for New_Role
         dv_principal.add('L2:L1048576')   # Column L for Type (for ADD)
@@ -88,8 +82,8 @@ def add_dropdowns_to_sheet(filename):
         fill_remove = PatternFill(start_color=Color("FFFFC7CE"), end_color=Color("FFFFC7CE"), fill_type="solid")
         fill_modify = PatternFill(start_color=Color("FFFFEB9C"), end_color=Color("FFFFEB9C"), fill_type="solid")
 
-        # Range now extends to column N to include all action builder columns
-        full_range = 'A2:N1048576'
+        # *** MODIFIED: Adjusted range to M (13 columns total) ***
+        full_range = 'A2:M1048576'
 
         # Formulas reference column J for the Action_Type
         rule_add = FormulaRule(formula=['=$J2="ADD"'], fill=fill_add)
@@ -120,15 +114,14 @@ def write_report_to_excel(report_data, filename):
         for col in action_columns:
             df[col] = ''
         
-        # Define the full column order for the interactive report
+        # *** MODIFIED: Removed 'Allow Discovery' and 'Expiration Time' from column order ***
         column_order = [
             'Full Path', 'Item Name', 'Item ID', 'Role', 'Principal Type', 
-            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID',
-            'Allow Discovery', 'Expiration Time'
+            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID'
         ] + action_columns
         
         # Reorder the DataFrame columns
-        df = df.reindex(columns=[col for col in column_order if col in df.columns])
+        df = df.reindex(columns=column_order)
 
         df.to_excel(filename, index=False, engine='openpyxl')
         
