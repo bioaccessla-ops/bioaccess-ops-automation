@@ -13,7 +13,7 @@ def get_file_permissions(drive_service, file_id, max_retries=5):
     retries = 0
     while retries < max_retries:
         try:
-            fields = 'permissions(id,type,emailAddress,domain,role,allowFileDiscovery,expirationTime)'
+            fields = 'permissions(id,type,emailAddress,domain,role)'
             response = drive_service.permissions().list(
                 fileId=file_id, fields=fields
             ).execute()
@@ -85,12 +85,16 @@ def list_files_recursively(drive_service, folder_id, current_path="", max_retrie
 
 def generate_permission_report(drive_service, folder_id, user_email=None):
     """
-    Generates a detailed permission report for all items under a folder,
-    including the root_folder_id for traceability.
+    Generates a detailed permission report for all items under a folder.
+    If user_email is provided, the report is filtered to only show permissions
+    matching that specific user or group email.
     """
     logging.info(f"Starting report generation for folder ID: {folder_id}")
+    if user_email:
+        logging.info(f"Filtering report to only include permissions for: {user_email}")
+
     all_items = list_files_recursively(drive_service, folder_id)
-    logging.info(f"Found {len(all_items)} total items to process.")
+    logging.info(f"Found {len(all_items)} total items to scan for permissions.")
     
     report_data = []
     for i, item in enumerate(all_items):
@@ -101,15 +105,20 @@ def generate_permission_report(drive_service, folder_id, user_email=None):
         if not permissions:
             continue
 
-        if user_email:
-            has_user_access = any(
-                p.get('emailAddress', '').lower() == user_email.lower() for p in permissions
-            )
-            if not has_user_access:
-                continue
-
         owner = item.get('owners', [{}])[0].get('emailAddress', 'N/A')
         for p in permissions:
+            # *** START: BUG FIX ***
+            # The filter logic is now applied to each individual permission entry.
+
+            # If a user_email filter is active, check if the current permission's
+            # email address matches. If it doesn't, skip it and move to the next one.
+            if user_email:
+                permission_email = p.get('emailAddress', '').lower()
+                if permission_email != user_email.lower():
+                    continue
+            
+            # *** END: BUG FIX ***
+
             ui_role = ROLE_MAP.get(p.get('role'), str(p.get('role')).capitalize())
             ui_principal_type = ROLE_MAP.get(p.get('type'), str(p.get('type')).capitalize())
 
