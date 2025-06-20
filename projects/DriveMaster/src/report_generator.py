@@ -122,9 +122,7 @@ def generate_permission_report(drive_service, folder_id, user_email=None):
                 'Email Address': p.get('emailAddress') or p.get('domain') or ('anyoneWithLink' if p.get('type') == 'anyone' else 'N/A'),
                 'Owner': owner,
                 'Google Drive URL': item.get('webViewLink'),
-                'Root Folder ID': folder_id, # <--- NEW COLUMN ADDED HERE
-                'Allow Discovery': p.get('allowFileDiscovery', 'N/A'),
-                'Expiration Time': p.get('expirationTime', 'N/A'),
+                'Root Folder ID': folder_id,
             })
             
     logging.info(f"Generated {len(report_data)} permission entries for the final report.")
