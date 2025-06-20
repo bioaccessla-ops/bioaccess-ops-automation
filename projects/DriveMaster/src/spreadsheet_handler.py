@@ -1,4 +1,5 @@
 # src/spreadsheet_handler.py
+
 import pandas as pd
 import logging
 from openpyxl import load_workbook
@@ -22,32 +23,40 @@ def write_report_to_csv(report_data, filename):
 def save_audit_log(audit_data, filename):
     """Saves the audit trail (list of dicts) to a CSV log file."""
     logging.info(f"Attempting to save audit log: {filename}")
-    #print(f"--- DEBUG: save_audit_log received data length: {len(audit_data)} ---") # Add this
-
-    # --- ADD THIS PRINT STATEMENT ---
-    #print(f"--- DEBUG: Raw audit_data content:\n{audit_data} ---") 
-    # --------------------------------
     
     if not audit_data:
-        logging.warning("No audit data to write to log file. (Check in save_audit_log)")
+        logging.warning("No audit data to write to log file.")
         return
     try:
         df = pd.DataFrame(audit_data)
-        #print(f"--- DEBUG: DataFrame created. Columns: {df.columns.tolist()} ---") # Add this
-        #print(f"--- DEBUG: DataFrame head:\n{df.head().to_string()} ---") # Add this
         
-        if df.empty: # This check would have been hit if df was empty
-            logging.warning("Audit DataFrame is empty after conversion. (Check in save_audit_log)")
+        if df.empty:
+            logging.warning("Audit DataFrame is empty after conversion.")
             return
 
-        df = pd.DataFrame(audit_data)
-        # Ensure consistent column order for readability in log files
+        # *** START: MODIFIED SECTION ***
+        # Define the complete and ordered list of columns for the audit log.
         log_column_order = [
-            'Timestamp', 'Root Folder ID', 'Item ID', 'Action_Command', 'Status', 'Details', # Added Root Folder ID
-            'Original_Principal_Type', 'Original_Email_Address', 'Original_Role',
-            'New_Principal_Type', 'New_Email_Address', 'New_Role'
+            'Timestamp', 
+            'Root Folder ID', 
+            'Full Path', 
+            'Item Name', 
+            'Item ID', 
+            'Action_Command', 
+            'Status', 
+            'Details',
+            'Original_Principal_Type', 
+            'Original_Email_Address', 
+            'Original_Role',
+            'New_Principal_Type', 
+            'New_Email_Address', 
+            'New_Role'
         ]
-        df = df.reindex(columns=[col for col in log_column_order if col in df.columns])
+        
+        # Reindex the DataFrame to ensure consistent column order.
+        # This will add any missing columns with blank values.
+        df = df.reindex(columns=log_column_order)
+        # *** END: MODIFIED SECTION ***
         
         df.to_csv(filename, index=False, encoding='utf-8')
         logging.info(f"Audit log successfully written to {filename}")
@@ -65,9 +74,8 @@ def add_dropdowns_to_sheet(filename):
         dv_role = DataValidation(type="list", formula1='"Viewer,Commenter,Editor"', allow_blank=True)
         dv_principal = DataValidation(type="list", formula1='"user,group,domain"', allow_blank=True)
 
-        # Columns for Data Validation: I, J, K
-        # Root Folder ID is now column I, so action builder columns shift
-        # Action_Type will be J, New_Role will be K, Add_Principal_Type will be L
+        # Columns for Data Validation: J, K, L
+        # Action_Type is J, New_Role is K, Type (for ADD) is L
         dv_action.add('J2:J1048576')      # Column J for Action_Type
         dv_role.add('K2:K1048576')        # Column K for New_Role
         dv_principal.add('L2:L1048576')   # Column L for Type (for ADD)
@@ -80,18 +88,17 @@ def add_dropdowns_to_sheet(filename):
         fill_remove = PatternFill(start_color=Color("FFFFC7CE"), end_color=Color("FFFFC7CE"), fill_type="solid")
         fill_modify = PatternFill(start_color=Color("FFFFEB9C"), end_color=Color("FFFFEB9C"), fill_type="solid")
 
-        # Adjust full_range to include the new column
-        # Assuming Root Folder ID is the 9th column (I), so Action_Type is now 10th (J)
-        full_range = 'A2:L1048576' # Extend to column L (12th column)
+        # Range now extends to column N to include all action builder columns
+        full_range = 'A2:N1048576'
 
-        # Corrected formulas to reference new column index for Action_Type (J)
-        rule_add = FormulaRule(formula=['=$J2="ADD"'], fill=fill_add) # <--- Changed to J
+        # Formulas reference column J for the Action_Type
+        rule_add = FormulaRule(formula=['=$J2="ADD"'], fill=fill_add)
         ws.conditional_formatting.add(full_range, rule_add)
 
-        rule_remove = FormulaRule(formula=['=$J2="REMOVE"'], fill=fill_remove) # <--- Changed to J
+        rule_remove = FormulaRule(formula=['=$J2="REMOVE"'], fill=fill_remove)
         ws.conditional_formatting.add(full_range, rule_remove)
 
-        rule_modify = FormulaRule(formula=['=$J2="MODIFY"'], fill=fill_modify) # <--- Changed to J
+        rule_modify = FormulaRule(formula=['=$J2="MODIFY"'], fill=fill_modify)
         ws.conditional_formatting.add(full_range, rule_modify)
 
         wb.save(filename)
@@ -108,17 +115,19 @@ def write_report_to_excel(report_data, filename):
     try:
         df = pd.DataFrame(report_data)
         
-        # Add the new Action Builder columns based on new position
+        # Add the action builder columns
         action_columns = ['Action_Type', 'New_Role', 'Type (for ADD)', 'Email/Domain (for ADD)']
         for col in action_columns:
             df[col] = ''
         
-        # Update column_order to include 'Root Folder ID'
+        # Define the full column order for the interactive report
         column_order = [
             'Full Path', 'Item Name', 'Item ID', 'Role', 'Principal Type', 
-            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID' # <--- NEW COLUMN ADDED HERE
+            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID',
+            'Allow Discovery', 'Expiration Time'
         ] + action_columns
         
+        # Reorder the DataFrame columns
         df = df.reindex(columns=[col for col in column_order if col in df.columns])
 
         df.to_excel(filename, index=False, engine='openpyxl')
