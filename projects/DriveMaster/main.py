@@ -44,7 +44,7 @@ def main():
     # --- Fetch Command ---
     parser_fetch = subparsers.add_parser('fetch', help="Fetch permissions and save to an Excel file for editing.")
     parser_fetch.add_argument('--root', required=True, help="Google Drive root folder ID to scan.")
-    parser_fetch.add_argument('--output', required=True, help="Output .xlsx file name (will be saved in the 'reports' folder).")
+    # --output argument removed as it's now dynamically generated
     parser_fetch.add_argument('--email', help="(Optional) Filter report for a single user's access.", default=None)
 
     # --- Apply Changes Command ---
@@ -56,7 +56,7 @@ def main():
 
     # --- Rollback Command ---
     parser_rollback = subparsers.add_parser('rollback', help="Rollback changes using an audit log.")
-    parser_rollback.add_argument('--from-log', required=True, help="The apply-changes audit log (.csv) file to rollback from.")
+    parser_rollback.add_argument('--from-log', required=True, help="The apply-changes audit log (.csv) file to rollback from (must be in 'logs' folder).")
     parser_rollback.add_argument('--root', required=False, default=None, help="(Optional) Root folder ID. If not provided, extracted from audit log.")
     parser_rollback.add_argument('--live', action='store_true', help="Perform the rollback live. USE WITH CAUTION.")
     
@@ -69,6 +69,7 @@ def main():
         return
 
     # --- Setup common paths for logging/archiving ---
+    Path("./reports").mkdir(exist_ok=True)
     Path("./archives").mkdir(exist_ok=True)
     Path("./logs").mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -134,40 +135,80 @@ def main():
                 return
             logging.info(f"--- Starting 'apply-changes' in LIVE mode from file: {args.input} ---")
         
-        # process_changes already logs its own 'Starting Live Mode' message
         # audit_trail_data is already populated from the call above
         
         # --- LOG: Apply Changes Audit ---
         log_filename = f"{timestamp}_apply_{root_folder_name}_audit.csv"
         log_path = os.path.join('logs', log_filename)
         save_audit_log(audit_trail_data, log_path)
-        logging.info(f"Audit log saved to {log_path}")
 
         logging.info("'apply-changes' command finished.")
     
     elif args.command == 'rollback':
         logging.info(f"--- Starting 'rollback' command from audit log: {args.from_log} ---")
         
+        # *** START: MODIFIED SECTION - Input Sanitation & Validation ***
+        try:
+            # Get the absolute path of the 'logs' directory for comparison
+            logs_dir_abs = Path("./logs").resolve()
+            # Resolve the user-provided path to prevent traversal attacks (e.g., ../../file)
+            log_file_abs = Path(args.from_log).resolve()
+
+            # SECURITY CHECK: Ensure the requested log file is inside the 'logs' directory
+            if logs_dir_abs not in log_file_abs.parents:
+                logging.error(f"Security Error: The specified log file '{args.from_log}' must be inside the 'logs' directory. Operation aborted.")
+                return
+
+            # FILE CHECK: Ensure the file actually exists
+            if not log_file_abs.is_file():
+                logging.error(f"File Not Found: The specified log file does not exist at '{log_file_abs}'.")
+                return
+        
+        except Exception as e:
+            logging.error(f"An error occurred while validating the log file path '{args.from_log}': {e}")
+            return
+
         is_dry_run = not args.live
 
-        # Read the audit log to get its associated Root Folder ID
+        # Read the audit log with improved error handling for content validation
         try:
-            audit_log_df = pd.read_csv(args.from_log).fillna('')
-            root_id_from_log = audit_log_df['Root Folder ID'].iloc[0] if not audit_log_df.empty else 'UnknownRoot'
-        except Exception as e:
-            logging.error(f"Failed to read audit log {args.from_log} or extract Root Folder ID: {e}")
+            audit_log_df = pd.read_csv(log_file_abs).fillna('')
+            
+            # CONTENT CHECK 1: Ensure the required column exists
+            if 'Root Folder ID' not in audit_log_df.columns:
+                logging.error(f"Invalid Log: The audit log '{args.from_log}' is missing the required 'Root Folder ID' column.")
+                return
+
+            # CONTENT CHECK 2: Ensure the log file is not empty
+            if audit_log_df.empty:
+                logging.error(f"Invalid Log: The audit log '{args.from_log}' is empty and contains no actions to roll back.")
+                return
+
+            root_id_from_log = str(audit_log_df['Root Folder ID'].iloc[0])
+
+            # CONTENT CHECK 3: Ensure the Root Folder ID itself is not blank
+            if not root_id_from_log:
+                logging.error(f"Invalid Log: The 'Root Folder ID' in the first row of '{args.from_log}' is blank.")
+                return
+
+        except pd.errors.ParserError:
+            logging.error(f"Failed to parse the log file '{args.from_log}'. Please ensure it is a valid CSV file.")
             return
+        except Exception as e:
+            logging.error(f"Failed to read or process the audit log '{args.from_log}': {e}")
+            return
+        # *** END: MODIFIED SECTION ***
         
         # Use root_id from log for naming, unless overridden by --root argument
         actual_root_id = args.root if args.root else root_id_from_log
         
-        if actual_root_id == 'UnknownRoot':
+        if actual_root_id == 'UnknownRoot': # This case is now less likely with better checks
             logging.error("Could not determine Root Folder ID for rollback. Please provide --root argument.")
             return
 
         root_folder_name = _sanitize_filename(_get_item_name(service, actual_root_id))
 
-        logging.info(f"--- Starting 'rollback' command from audit log: {args.from_log} for folder ID: {actual_root_id} ---")
+        logging.info(f"--- Rolling back changes for folder ID: {actual_root_id} ---")
 
         # --- ARCHIVE: Pre-Rollback Snapshot ---
         archive_filename = f"{timestamp}_rollback_{root_folder_name}_pre_rollback.csv"
@@ -191,18 +232,17 @@ def main():
         # --- Generate Rollback Actions ---
         try:
             # Generate the inverse actions directly from the audit log
-            # This function returns a list of dictionaries formatted for process_changes
             rollback_actions = generate_rollback_actions(
                 drive_service=service, 
                 root_folder_id=actual_root_id,
-                audit_log_path=args.from_log
+                audit_log_path=log_file_abs # Use the validated, absolute path
             )
         except Exception as e:
             logging.error(f"Failed to generate rollback actions: {e}")
             return
 
         if not rollback_actions:
-            logging.info("No actions needed for rollback. Current state matches backup derived from log.")
+            logging.info("No successful actions found in the log to roll back.")
             return
             
         # Write generated rollback actions to a temporary Excel file
@@ -229,7 +269,6 @@ def main():
         log_filename = f"{timestamp}_rollback_{root_folder_name}_audit.csv"
         log_path = os.path.join('logs', log_filename)
         save_audit_log(audit_trail_data_rollback, log_path)
-        logging.info(f"Audit log saved to {log_path}")
 
         logging.info("'rollback' command finished.")
 
