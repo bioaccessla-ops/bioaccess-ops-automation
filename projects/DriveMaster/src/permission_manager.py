@@ -1,4 +1,5 @@
 # src/permission_manager.py
+
 import logging
 import pandas as pd
 from googleapiclient.errors import HttpError
@@ -53,14 +54,21 @@ def generate_rollback_actions(drive_service, root_folder_id, audit_log_path):
     """
     logging.info(f"Generating rollback actions from audit log: {audit_log_path}")
 
-    # 1. Get current live permissions from Drive (returns UI roles)
-    current_report_data_ui_roles = generate_permission_report(drive_service, root_folder_id)
-    current_df_ui_roles = pd.DataFrame(current_report_data_ui_roles).fillna('')
+    # *** START: MODIFIED SECTION ***
+    # 1. Get current live permissions and metadata from Drive.
+    # This report contains the current 'Full Path' and 'Item Name' for all items.
+    current_report_data = generate_permission_report(drive_service, root_folder_id)
 
-    # Convert current roles from UI to API for canonical comparison
-    current_df_ui_roles['Role_API'] = current_df_ui_roles['Role'].apply(lambda x: REVERSE_ROLE_MAP.get(x, x)).str.lower()
-    current_permissions_set = {_permission_to_canonical(row) for _, row in current_df_ui_roles.iterrows()}
-
+    # Create a lookup map from Item ID to its current metadata.
+    # This avoids repeated API calls later.
+    item_metadata_map = {}
+    for item in current_report_data:
+        # Use .setdefault to only store the first instance of metadata for an item_id
+        item_metadata_map.setdefault(item['Item ID'], {
+            'Item Name': item['Item Name'],
+            'Full Path': item['Full Path']
+        })
+    # *** END: MODIFIED SECTION ***
 
     # 2. Read the audit log (which contains the original changes)
     try:
@@ -79,6 +87,14 @@ def generate_rollback_actions(drive_service, root_folder_id, audit_log_path):
         item_id = str(action_log_entry['Item ID'])
         original_command = str(action_log_entry['Action_Command'])
         
+        # *** START: MODIFIED SECTION ***
+        # Look up the current name and path for the item_id.
+        # Default to 'N/A' if the item has been deleted or moved.
+        metadata = item_metadata_map.get(item_id, {'Item Name': 'N/A (current name not found)', 'Full Path': 'N/A (current path not found)'})
+        item_name = metadata['Item Name']
+        full_path = metadata['Full Path']
+        # *** END: MODIFIED SECTION ***
+
         # Original details from the log
         original_principal_type_ui = str(action_log_entry['Original_Principal_Type'])
         original_email_address = str(action_log_entry['Original_Email_Address'])
@@ -89,11 +105,11 @@ def generate_rollback_actions(drive_service, root_folder_id, audit_log_path):
         new_email_address = str(action_log_entry['New_Email_Address'])
         new_role_ui = str(action_log_entry['New_Role'])
 
-        # Prepare base dictionary for the rollback action, matching Excel columns
+        # Prepare base dictionary for the rollback action, now with populated path/name
         rollback_action_dict = {
             'Item ID': item_id,
-            'Full Path': '', # For Excel structure
-            'Item Name': '',
+            'Full Path': full_path,
+            'Item Name': item_name,
             'Role': '', # Will be set by action type
             'Principal Type': '', # Will be set by action type
             'Email Address': '', # Will be set by action type
@@ -178,14 +194,20 @@ def process_changes(drive_service, input_excel_path=None, dry_run=True, actions_
         command = str(row.get('Action_Type')).upper()
         item_id = str(row.get('Item ID'))
         
+        full_path = str(row.get('Full Path', ''))
+        item_name = str(row.get('Item Name', ''))
+        
         current_audit_entry = {
             'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             'Root Folder ID': root_folder_id_found,
+            'Full Path': full_path,
+            'Item Name': item_name,
             'Item ID': item_id,
             'Action_Command': command,
             'Status': 'PENDING',
             'Details': ''
         }
+
         current_audit_entry['Original_Principal_Type'] = str(row.get('Principal Type', ''))
         current_audit_entry['Original_Email_Address'] = str(row.get('Email Address', ''))
         current_audit_entry['Original_Role'] = str(row.get('Role', ''))
