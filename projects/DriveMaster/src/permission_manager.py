@@ -8,7 +8,7 @@ from src.config import REVERSE_ROLE_MAP, ROLE_MAP
 from src.report_generator import generate_permission_report
 
 def _find_permission_id(drive_service, file_id, p_type, p_address, p_role_api):
-    # This function is unchanged
+    """Finds the permission ID for a given principal and role."""
     try:
         permissions = drive_service.permissions().list(fileId=file_id, fields='permissions(id,type,emailAddress,domain,role)').execute()
         for p in permissions.get('permissions', []):
@@ -21,7 +21,7 @@ def _find_permission_id(drive_service, file_id, p_type, p_address, p_role_api):
     return None
 
 def generate_rollback_actions(drive_service, root_folder_id, audit_log_path):
-    # This function is unchanged
+    """Generates inverse actions for rollback."""
     logging.info(f"Generating rollback actions from audit log: {audit_log_path}")
     try:
         audit_log_df = pd.read_csv(audit_log_path).fillna('')
@@ -29,33 +29,46 @@ def generate_rollback_actions(drive_service, root_folder_id, audit_log_path):
     except Exception as e:
         logging.error(f"Failed to read or parse audit log file {audit_log_path}: {e}")
         return []
+    
     if successful_actions_df.empty:
         logging.info("No successful actions found in the log to roll back.")
         return []
+
     current_report_data = generate_permission_report(drive_service, root_folder_id)
     item_metadata_map = {item['Item ID']: {'Item Name': item['Item Name'], 'Full Path': item['Full Path']} for item in current_report_data}
+
     actions_to_perform = []
     for _, log_entry in successful_actions_df.iterrows():
-        item_id, original_command = str(log_entry['Item ID']), str(log_entry['Action_Command'])
+        item_id = str(log_entry['Item ID'])
+        original_command = str(log_entry['Action_Command'])
         metadata = item_metadata_map.get(item_id, {'Item Name': 'N/A', 'Full Path': 'N/A'})
-        rollback_action = {'Item ID': item_id, 'Full Path': metadata['Full Path'], 'Item Name': metadata['Item Name'], 'Role': '', 'Principal Type': '', 'Email Address': '', 'Action_Type': '', 'New_Role': '', 'Type (for ADD)': '', 'Email/Domain (for ADD)': '', 'Restrict Download': '', 'Root Folder ID': root_folder_id}
+
+        rollback_action = {
+            'Item ID': item_id, 'Full Path': metadata['Full Path'], 'Item Name': metadata['Item Name'],
+            'Role': '', 'Principal Type': '', 'Email Address': '',
+            'Action_Type': '', 'New_Role': '', 'Type (for ADD)': '', 'Email/Domain (for ADD)': '',
+            'Restrict Download': '', 'Root Folder ID': root_folder_id
+        }
+
         if original_command == 'ADD':
             rollback_action.update({'Action_Type': 'REMOVE', 'Principal Type': log_entry['New_Principal_Type'], 'Email Address': log_entry['New_Email_Address'], 'Role': log_entry['New_Role']})
-            logging.info(f"Rollback Action: REMOVE {log_entry['New_Email_Address']} from {item_id}")
             actions_to_perform.append(rollback_action)
         elif original_command == 'REMOVE':
             rollback_action.update({'Action_Type': 'ADD', 'New_Role': log_entry['Original_Role'], 'Type (for ADD)': log_entry['Original_Principal_Type'], 'Email/Domain (for ADD)': log_entry['Original_Email_Address']})
-            logging.info(f"Rollback Action: ADD {log_entry['Original_Email_Address']} to {item_id}")
             actions_to_perform.append(rollback_action)
         elif original_command == 'MODIFY':
             rollback_action.update({'Action_Type': 'MODIFY', 'Principal Type': log_entry['New_Principal_Type'], 'Email Address': log_entry['New_Email_Address'], 'Role': log_entry['New_Role'], 'New_Role': log_entry['Original_Role']})
-            logging.info(f"Rollback Action: MODIFY {log_entry['New_Email_Address']} on {item_id} back to {log_entry['Original_Role']}")
             actions_to_perform.append(rollback_action)
         elif original_command == 'SET_DOWNLOAD_RESTRICTION':
+            # This action now needs to be associated with a principal to be reversed correctly.
+            # We will generate one rollback action per principal affected.
             rollback_action['Restrict Download'] = str(log_entry['Original_Role'])
-            logging.info(f"Rollback Action: SET_DOWNLOAD_RESTRICTION on {item_id} back to {log_entry['Original_Role']}")
+            rollback_action['Principal Type'] = log_entry['Original_Principal_Type']
+            rollback_action['Email Address'] = log_entry['Original_Email_Address']
             actions_to_perform.append(rollback_action)
+            
     return actions_to_perform
+
 
 def process_changes(drive_service, input_excel_path=None, dry_run=True, actions_list=None):
     if not dry_run: logging.warning("--- Starting Live Mode: Changes WILL be applied to Google Drive. ---")
@@ -63,6 +76,7 @@ def process_changes(drive_service, input_excel_path=None, dry_run=True, actions_
     audit_trail = []
     df, root_folder_id_found = None, None
 
+    # Load data from either the action list (for rollback) or an Excel file
     if actions_list is not None:
         df = pd.DataFrame(actions_list).fillna('')
         if not df.empty: root_folder_id_found = str(df.iloc[0].get('Root Folder ID', ''))
@@ -72,12 +86,10 @@ def process_changes(drive_service, input_excel_path=None, dry_run=True, actions_
             if 'Root Folder ID' not in df.columns or df.empty: raise ValueError("Input file is missing 'Root Folder ID' column or is empty.")
             root_folder_id_found = str(df.iloc[0]['Root Folder ID'])
         except Exception as e:
-            logging.error(f"Failed to read or validate Excel file {input_excel_path}: {e}")
-            return [], 'N/A_RootID_FromProcess'
+            logging.error(f"Failed to read or validate Excel file {input_excel_path}: {e}"); return [], 'N/A_RootID_FromProcess'
 
     if not root_folder_id_found:
-        logging.error("Could not determine Root Folder ID from the input. Aborting.")
-        return [], 'N/A_RootID_FromProcess'
+        logging.error("Could not determine Root Folder ID from the input. Aborting."); return [], 'N/A_RootID_FromProcess'
 
     logging.info("Fetching current file states from Google Drive for comparison...")
     original_report_df = pd.DataFrame(generate_permission_report(drive_service, root_folder_id_found))
@@ -92,41 +104,39 @@ def process_changes(drive_service, input_excel_path=None, dry_run=True, actions_
             if 'TRUE' in restrictions: desired_map[item_id] = 'TRUE'
             elif 'FALSE' in restrictions: desired_map[item_id] = 'FALSE'
         
-        # # --- START: DEBUG PRINTS ---
-        # print("\n" + "!"*60)
-        # print("DEBUG: Dictionaries for 'Restrict Download' comparison")
-        # print(f"DEBUG: DESIRED state map (from input): {desired_map}")
-        # print(f"DEBUG: ORIGINAL state map (from Drive): {original_map}")
-        # print("!"*60 + "\n")
-        # # --- END: DEBUG PRINTS ---
-        
         for item_id, desired_str in desired_map.items():
             original_str = str(original_map.get(item_id, 'N/A')).upper()
-            
-            # --- START: DEBUG PRINTS ---
-            # print("\n" + "="*50)
-            # print(f"DEBUG: Comparing Item ID: {item_id}")
-            # print(f"  - Desired State (from input map):   '{desired_str}'")
-            # print(f"  - Original State (from Drive map):  '{original_str}'")
-            comparison_result = desired_str != original_str
-            # print(f"  - COMPARISON (Is there a difference?): {comparison_result}")
-            # print("="*50)
-            # --- END: DEBUG PRINTS ---
-
-            if comparison_result:
-                file_info = df[df['Item ID'] == item_id].iloc[0]
-                details = f"Set Restrict Download from '{original_str}' to '{desired_str}'"
-                entry = {'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Root Folder ID': root_folder_id_found, 'Full Path': file_info.get('Full Path', ''), 
-                         'Item Name': file_info.get('Item Name', ''), 'Item ID': item_id, 'Action_Command': 'SET_DOWNLOAD_RESTRICTION', 
-                         'Status': 'DRY_RUN' if dry_run else 'PENDING', 'Details': details, 'Original_Role': original_str, 'New_Role': desired_str }
-                if dry_run: print(f"[DRY RUN] {details} for Item ID: {item_id}")
+            if desired_str != original_str:
+                # A change is detected. Perform the API call ONCE.
+                final_status, details = 'PENDING', ''
+                if dry_run:
+                    details = f"Set Restrict Download from '{original_str}' to '{desired_str}'"
+                    print(f"[DRY RUN] {details} for Item ID: {item_id}")
+                    final_status = 'DRY_RUN'
                 else:
                     try:
                         drive_service.files().update(fileId=item_id, body={'copyRequiresWriterPermission': (desired_str == 'TRUE')}).execute()
-                        entry['Status'] = 'SUCCESS'; print(f"[SUCCESS] {details} for Item ID: {item_id}")
+                        details = f"Set Restrict Download from '{original_str}' to '{desired_str}'"
+                        print(f"[SUCCESS] {details} for Item ID: {item_id}")
+                        final_status = 'SUCCESS'
                     except HttpError as e:
-                        entry['Status'] = 'ERROR'; entry['Details'] = str(e); print(f"[ERROR] Failed to set restriction for {item_id}: {e}")
-                audit_trail.append(entry)
+                        details = str(e)
+                        print(f"[ERROR] Failed to set restriction for {item_id}: {e}")
+                        final_status = 'ERROR'
+                
+                # *** MODIFIED: Create a separate log entry for EACH permission on the affected file ***
+                permission_rows = df[df['Item ID'] == item_id]
+                for _, p_row in permission_rows.iterrows():
+                    entry = {
+                        'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Root Folder ID': root_folder_id_found,
+                        'Full Path': p_row.get('Full Path', ''), 'Item Name': p_row.get('Item Name', ''), 'Item ID': item_id,
+                        'Action_Command': 'SET_DOWNLOAD_RESTRICTION', 'Status': final_status, 'Details': details,
+                        'Original_Principal_Type': p_row.get('Principal Type', ''),
+                        'Original_Email_Address': p_row.get('Email Address', ''),
+                        'Original_Role': original_str, 'New_Role': desired_str,
+                        'New_Principal_Type': '', 'New_Email_Address': ''
+                    }
+                    audit_trail.append(entry)
 
     # --- Step 2: Process Permission-Level Changes ---
     logging.info("Analyzing permission actions (ADD/REMOVE/MODIFY)...")
