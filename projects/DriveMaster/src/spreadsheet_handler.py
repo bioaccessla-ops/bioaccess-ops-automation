@@ -68,7 +68,7 @@ def add_dropdowns_to_sheet(filename):
         dv_restrict = DataValidation(type="list", formula1='"TRUE,FALSE"', allow_blank=True)
         dv_action = DataValidation(type="list", formula1='"MODIFY,REMOVE,ADD"', allow_blank=True)
         dv_role = DataValidation(type="list", formula1='"Viewer,Commenter,Editor"', allow_blank=True)
-        dv_principal = DataValidation(type="list", formula1='"user,group,domain"', allow_blank=True)
+        dv_principal = DataValidation(type="list", formula1='"User,Group,Domain"', allow_blank=True)
 
         # Column J: Restrict Download
         # Column K: Action_Type
