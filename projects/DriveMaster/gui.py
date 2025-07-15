@@ -5,11 +5,12 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 import logging
 from queue import Queue
-import os # Import the os module
+import os
+from PIL import Image, ImageTk
 
 # Import the controller functions
 from src.controller import run_fetch, run_apply_changes, run_rollback, get_fetch_output_path
-from src.auth import authenticate_and_get_service # Import auth for the pre-check
+from src.auth import authenticate_and_get_service
 
 # --- Custom Logging Handler to safely update the GUI from other threads ---
 class GuiHandler(logging.Handler):
@@ -23,20 +24,49 @@ class GuiHandler(logging.Handler):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+
         self.title("DriveMaster Control Panel")
-        self.geometry("700x600")
+        self.geometry("750x650")
+
+        # --- MODIFIED: Header layout updated for centering ---
+        header_frame = ttk.Frame(self, padding=(10, 10, 10, 0))
+        header_frame.pack(fill="x")
+        # Make the outer columns expand, pushing the middle one to the center
+        header_frame.columnconfigure(0, weight=1)
+        header_frame.columnconfigure(2, weight=1)
+
+        # Create a container for the logo and title to keep them together
+        title_container = ttk.Frame(header_frame)
+        title_container.grid(row=0, column=1) # Place container in the center column
+
+        self.logo_image = None
+        try:
+            logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'logo.png')
+            img = Image.open(logo_path)
+            img.thumbnail((150, 60)) # Adjusted size slightly
+            self.logo_image = ImageTk.PhotoImage(img)
+            ttk.Label(title_container, image=self.logo_image).pack(side="left", padx=(0, 10))
+        except FileNotFoundError:
+            ttk.Label(title_container, text="[Logo]", font=('Helvetica', 12, 'italic')).pack(side="left", padx=(0, 10))
+            
+        # Add the new, more eye-catching title
+        ttk.Label(title_container, text='DriveMaster: Permissions Control Panel', font=('Helvetica', 16, 'bold')).pack(side="left")
+        # --- END MODIFICATION ---
+
         self.main_frame = ttk.Frame(self, padding="10")
         self.main_frame.pack(fill="both", expand=True)
+        
         self.create_fetch_widgets()
         self.create_apply_widgets()
         self.create_rollback_widgets()
         self.create_output_widgets()
+        
         self.log_queue = Queue()
         self.queue_handler = GuiHandler(self.log_queue)
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[self.queue_handler])
+        
         self.after(100, self.poll_log_queue)
 
-    # ... (create_apply_widgets, create_rollback_widgets, create_output_widgets are unchanged) ...
     def create_fetch_widgets(self):
         frame = ttk.LabelFrame(self.main_frame, text="1. Fetch Permissions", padding="10")
         frame.pack(fill="x", expand=False, pady=5)
@@ -76,9 +106,13 @@ class App(tk.Tk):
     def create_output_widgets(self):
         frame = ttk.LabelFrame(self.main_frame, text="Output Log", padding="10")
         frame.pack(fill="both", expand=True, pady=5)
+        
+        button_frame = ttk.Frame(frame)
+        button_frame.pack(fill="x", pady=(0, 5))
+        ttk.Button(button_frame, text="Clear Log", command=self.clear_output).pack(side="right")
+        
         self.output_text = tk.Text(frame, wrap="word", height=10, font=("Courier New", 9))
         self.output_text.pack(fill="both", expand=True)
-        frame.columnconfigure(0, weight=1); frame.rowconfigure(0, weight=1)
 
     def poll_log_queue(self):
         while not self.log_queue.empty():
@@ -94,72 +128,36 @@ class App(tk.Tk):
         threading.Thread(target=target, args=args, daemon=True).start()
 
     def on_fetch(self):
-        """Handles the 'Run Fetch' button click, with a pre-check for locked files."""
-        self.clear_output()
-        folder_id = self.fetch_id_var.get()
-        if not folder_id:
-            messagebox.showerror("Error", "Please enter a Folder ID.")
-            return
-
-        # --- START: New Pre-Check Logic ---
-        # First, we need an authenticated service to get the folder name
+        self.clear_output(); folder_id = self.fetch_id_var.get()
+        if not folder_id: messagebox.showerror("Error", "Please enter a Folder ID."); return
         service = authenticate_and_get_service()
-        if not service:
-            logging.critical("Authentication failed. Cannot proceed with fetch.")
-            return
-        
-        # Determine the exact path of the file we are about to create
+        if not service: logging.critical("Authentication failed."); return
         output_path = get_fetch_output_path(service, folder_id)
-        if not output_path:
-            messagebox.showerror("Error", "Could not determine the output file path. Check logs for details.")
-            return
-
-        # Now, check if the file exists and is locked
+        if not output_path: messagebox.showerror("Error", "Could not determine output path."); return
         while os.path.exists(output_path):
             try:
-                # Try to open the file in append mode to test the lock.
-                # If it's locked by Excel, this will raise a PermissionError.
-                with open(output_path, 'a'):
-                    pass
-                # If we get here, the file exists but is not locked, so we can break the loop.
-                break
+                with open(output_path, 'a'): pass; break
             except PermissionError:
-                # The file is locked! Ask the user what to do.
-                user_choice = messagebox.askyesno(
-                    "File In Use",
-                    f"The report file is currently open:\n\n{output_path}\n\nPlease close the file to allow it to be overwritten.\n\nDo you want to retry?",
-                    icon='warning'
-                )
-                if not user_choice: # If user clicks "No"
-                    logging.warning("Fetch operation cancelled by user because file is in use.")
-                    return
-                # If user clicks "Yes", the while loop will repeat the check
+                if not messagebox.askyesno("File In Use", f"The report file is currently open:\n\n{output_path}\n\nPlease close the file to proceed.\n\nRetry?"):
+                    logging.warning("Fetch cancelled by user."); return
             except Exception as e:
-                messagebox.showerror("Error", f"An unexpected error occurred while checking the file: {e}")
-                return
-        # --- END: New Pre-Check Logic ---
-
-        # If we get here, the file is either not locked or doesn't exist. It's safe to run the fetch.
+                messagebox.showerror("Error", f"An unexpected error occurred: {e}"); return
         logging.info("Pre-flight check passed. Starting fetch operation...")
         self.run_in_thread(run_fetch, folder_id, self.fetch_email_var.get() or None)
 
-    # ... (on_apply and on_rollback methods are unchanged) ...
     def on_apply(self):
-        excel_file = self.apply_file_var.get(); is_live = self.apply_live_var.get()
+        excel_file, is_live = self.apply_file_var.get(), self.apply_live_var.get()
         if not excel_file: messagebox.showerror("Error", "Please select a permissions Excel file."); return
-        if is_live and not messagebox.askyesno("Live Run Confirmation", "!!! WARNING !!!\nThis will apply changes to Google Drive.\n\nAre you sure you want to proceed?"):
-            logging.warning("Live Apply-Changes cancelled by user."); return
-        self.clear_output()
-        self.run_in_thread(run_apply_changes, excel_file, is_live)
+        if is_live and not messagebox.askyesno("Live Run Confirmation", "!!! WARNING !!!\nThis will apply changes to Google Drive.\n\nAre you sure?"):
+            logging.warning("Live Apply-Changes cancelled."); return
+        self.clear_output(); self.run_in_thread(run_apply_changes, excel_file, is_live)
 
     def on_rollback(self):
-        log_file = self.log_file_var.get(); is_live = self.rollback_live_var.get()
+        log_file, is_live = self.log_file_var.get(), self.rollback_live_var.get()
         if not log_file: messagebox.showerror("Error", "Please select an audit log file."); return
-        if is_live and not messagebox.askyesno("Live Rollback Confirmation", "!!! WARNING !!!\nThis will revert permissions on Google Drive.\n\nAre you sure you want to proceed?"):
-            logging.warning("Live Rollback cancelled by user."); return
-        self.clear_output()
-        self.run_in_thread(run_rollback, log_file, is_live)
-
+        if is_live and not messagebox.askyesno("Live Rollback Confirmation", "!!! WARNING !!!\nThis will revert permissions on Google Drive.\n\nAre you sure?"):
+            logging.warning("Live Rollback cancelled."); return
+        self.clear_output(); self.run_in_thread(run_rollback, log_file, is_live)
 
 if __name__ == "__main__":
     app = App()
