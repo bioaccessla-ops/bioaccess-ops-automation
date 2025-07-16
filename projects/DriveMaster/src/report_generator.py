@@ -1,5 +1,3 @@
-# src/report_generator.py
-
 import logging
 import time
 import random
@@ -8,7 +6,6 @@ from src.config import ROLE_MAP
 
 def get_file_permissions(drive_service, file_id, max_retries=5):
     """Fetches all permissions for a given file ID with retry logic."""
-    # ... (This function is correct and remains unchanged)
     retries = 0
     while retries < max_retries:
         try:
@@ -32,7 +29,6 @@ def get_file_permissions(drive_service, file_id, max_retries=5):
 
 def list_files_recursively(drive_service, folder_id, current_path="", max_retries=5):
     """Recursively lists all files and folders under a folder ID, building their full path."""
-    # ... (This function is correct and remains unchanged)
     all_items = []
     page_token = None
     retries = 0
@@ -85,18 +81,15 @@ def generate_permission_report(drive_service, folder_id, user_email=None):
         item_id = item.get('id')
         logging.info(f"Processing item {i+1}/{len(all_items)}: '{item.get('name')}' ({item_id})")
 
-        # *** MODIFIED: Using the correct API field 'copyRequiresWriterPermission' ***
         try:
-            # Note: Folders do not have this property and will throw an error, which we can safely ignore.
             if item.get('mimeType') == 'application/vnd.google-apps.folder':
                 is_restricted = "N/A"
             else:
                 file_metadata = drive_service.files().get(fileId=item_id, fields='copyRequiresWriterPermission').execute()
-                # This mapping is now direct. If the property is True, the file is restricted.
                 is_restricted = file_metadata.get('copyRequiresWriterPermission', False)
         except HttpError as e:
             logging.warning(f"Could not get metadata for '{item.get('name')}' ({item_id}). This is expected for folders. Error: {e}")
-            is_restricted = "N/A" # Default for items where it can't be fetched
+            is_restricted = "N/A"
 
         permissions = get_file_permissions(drive_service, item_id)
         if not permissions and is_restricted == "N/A":
@@ -116,7 +109,8 @@ def generate_permission_report(drive_service, folder_id, user_email=None):
                 'Full Path': item.get('path'),
                 'Item Name': item.get('name'),
                 'Item ID': item_id,
-                'Restrict Download': str(is_restricted).upper(),
+                # --- MODIFIED: Key name changed for clarity in the new design ---
+                'Current Download Restriction': str(is_restricted).upper(),
                 'Role': ui_role,
                 'Principal Type': ui_principal_type,
                 'Email Address': p.get('emailAddress') or p.get('domain') or ('anyoneWithLink' if p.get('type') == 'anyone' else 'N/A'),

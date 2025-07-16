@@ -30,7 +30,7 @@ The most common way to use the tool is a three-step process.
 This step reads all the permissions from a Google Drive folder and creates an Excel file for you to edit.
 
 1.  **Get the Folder ID:** In Google Drive, navigate to the folder you want to manage. The Folder ID is the long string of letters and numbers in the URL.
-    * `https://drive.google.com/drive/folders/`**`1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw`**
+    * Example: `https://drive.google.com/drive/folders/`**`1Q_GFk5fC7huNF-F1eTLmNKvPPMA68nLw`**
 2.  **Enter the ID:** Copy this ID and paste it into the **"Google Drive Folder ID"** box in the GUI.
 3.  **Run Fetch:** Click the **"Run Fetch"** button. The Output Log will show the progress.
 4.  **Open the Report:** When complete, a new `permissions_editor_...xlsx` file will be created in the `reports` folder. Open this file.
@@ -50,19 +50,19 @@ To change a user's permission, use the `Action_Type` dropdown on their specific 
     * **`Type of account (for ADD)`**: The type of principal (`user`, `group`, `domain`).
     * **`Email/Domain (for ADD)`**: The user/group email address or the domain name.
 
-**B) Restricting Downloads (`Restrict Download` column)**
+**B) Restricting Downloads (Using the `SET Download Restriction` column)**
 
-This is a file-level setting. To prevent Viewers and Commenters from downloading, printing, or copying a file:
+This is a file-level setting that prevents Viewers and Commenters from downloading, printing, or copying a file.
 
-1.  Find any row corresponding to that file.
-2.  In the **`Restrict Download`** column, use the dropdown to change the value from `FALSE` to `TRUE`.
+* **Current Download Restriction:** This is a read-only column that shows you the file's current setting (`TRUE`, `FALSE`, or `N/A` for folders). Do not edit this column.
+* **SET Download Restriction:** This is the action column. It is blank by default. To change the setting for a file, find any permission row for that file and use the dropdown to select `TRUE` or `FALSE`. You only need to set this on one row for the entire file.
 
 ### Step 2.3: Apply the Changes
 
 After making all your desired changes in the Excel file, save and close it.
 
 1.  **Select the File:** In the GUI's **"Apply Changes"** section, click **"Browse"** and select the `.xlsx` file you just edited.
-2.  **Perform a Dry Run (Highly Recommended):** Leave the "Make LIVE changes" box **unchecked** and click **"Run Apply-Changes"**. The Output Log will show you exactly what actions it *would* perform without actually touching your live data. Review this to ensure it matches your intent.
+2.  **Perform a Dry Run (Highly Recommended):** Leave the **"Make LIVE changes"** box **unchecked** and click **"Run Apply-Changes"**. Review the Output Log to ensure it matches your intent.
 3.  **Perform a Live Run:** Once you are confident, check the **"Make LIVE changes"** box. Click **"Run Apply-Changes"** again and confirm "Yes" in the warning pop-up. The tool will now apply your changes to Google Drive.
 
 An audit log of the operation will be saved in the `logs` folder for your records.
@@ -74,7 +74,7 @@ An audit log of the operation will be saved in the `logs` folder for your record
 If you need to revert the changes made during a specific "Apply Changes" run, you can use the `rollback` feature.
 
 1.  **Select the Audit Log:** In the GUI's **"Rollback Changes"** section, click **"Browse"** and select the `..._apply_..._audit.csv` file from the `logs` folder that corresponds to the run you want to undo.
-2.  **Run Rollback:** Check the "Perform LIVE rollback" box and click **"Run Rollback"**. Confirm "Yes" in the warning pop-up.
+2.  **Run Rollback:** Check the **"Perform LIVE rollback"** box and click **"Run Rollback"**. Confirm "Yes" in the warning pop-up.
 3.  The tool will automatically calculate and apply the inverse operations to restore the permissions to their previous state.
 
 ---
@@ -87,3 +87,13 @@ The application will create several folders in the same directory where you run 
 * **`archives/`**: Contains raw CSV backups of the permission states before any action is taken.
 * **`logs/`**: Contains detailed CSV audit logs of every action performed.
 * **`credentials/`**: Stores your `token.json` file after you log in.
+
+---
+
+## 5. Advanced - Switching User Accounts
+
+If you need to run the tool with a different Google Account, you must first clear the current user's saved authentication token.
+
+1.  Navigate to the `credentials` folder.
+2.  Delete the `token.json` file.
+3.  The next time you run an operation (e.g., "Run Fetch"), the tool will initiate the first-time setup and authentication process again (see Section 1), allowing you to log in with a new account.

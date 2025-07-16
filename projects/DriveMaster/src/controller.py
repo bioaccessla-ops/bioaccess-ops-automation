@@ -1,5 +1,3 @@
-# src/controller.py
-
 import logging
 import os
 from datetime import datetime
@@ -107,7 +105,6 @@ def run_rollback(log_file_path, is_live_run, root_id_override=None):
     root_folder_name = _sanitize_filename(_get_item_name(service, actual_root_id))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # --- OPTIMIZATION: Fetch live data ONCE at the beginning ---
     logging.info(f"Fetching live permission data once for all operations...")
     live_report_data = generate_permission_report(service, actual_root_id)
 
@@ -115,19 +112,25 @@ def run_rollback(log_file_path, is_live_run, root_id_override=None):
     if write_report_to_csv(live_report_data, os.path.join('archives', f"{timestamp}_rollback_{root_folder_name}_pre_rollback.csv")):
         logging.info(f"Successfully created pre-rollback archive.")
     
-    # Pass the pre-fetched data to the action generator
     rollback_actions = generate_rollback_actions(log_file_abs, live_report_data)
     if not rollback_actions: 
         logging.info("No actions to perform for rollback."); return True
 
     temp_excel_path = os.path.join(tempfile.gettempdir(), f'temp_rollback_{timestamp}.xlsx')
     try:
-        cols = ['Item ID', 'Action_Type', 'New_Role', 'Type of account (for ADD)', 'Email/Domain (for ADD)', 'Principal Type', 'Email Address', 'Role', 'Full Path', 'Item Name', 'Root Folder ID', 'Restrict Download']
+        # --- MODIFIED: The column list now matches the full, current format ---
+        # This ensures the temporary file for rollback has the correct columns.
+        cols = [
+            'Full Path', 'Item Name', 'Item ID', 'Role', 'Principal Type', 
+            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID', 
+            'Current Download Restriction', 'Action_Type', 'New_Role', 
+            'Type of account (for ADD)', 'Email/Domain (for ADD)', 'SET Download Restriction'
+        ]
         pd.DataFrame(rollback_actions).reindex(columns=cols).fillna('').to_excel(temp_excel_path, index=False)
+        # --- END MODIFICATION ---
     except Exception as e:
         logging.error(f"Failed to write temporary rollback file: {e}"); return False
 
-    # Pass the pre-fetched data to the change processor
     audit_trail, _ = process_changes(service, input_excel_path=temp_excel_path, dry_run=not is_live_run, live_report_data=live_report_data)
     os.remove(temp_excel_path)
     logging.info(f"Temporary rollback file deleted: {temp_excel_path}")
