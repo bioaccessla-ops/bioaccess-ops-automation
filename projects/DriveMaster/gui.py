@@ -6,12 +6,9 @@ from queue import Queue
 import os
 from PIL import Image, ImageTk
 
-# Import the controller functions
-from src.controller import run_fetch, run_apply_changes, run_rollback, get_fetch_output_path
-# --- MODIFIED: Import the new reset_authentication function ---
+from src.controller import run_fetch, prepare_apply_changes, execute_apply_changes, prepare_rollback, execute_rollback, get_fetch_output_path
 from src.auth import authenticate_and_get_service, reset_authentication
 
-# --- Custom Logging Handler to safely update the GUI from other threads ---
 class GuiHandler(logging.Handler):
     def __init__(self, log_queue):
         super().__init__()
@@ -25,7 +22,7 @@ class App(tk.Tk):
         super().__init__()
 
         self.title("DriveMaster Control Panel")
-        self.geometry("750x700") # Increased height slightly for the new section
+        self.geometry("750x700")
 
         header_frame = ttk.Frame(self, padding=(10, 10, 10, 0))
         header_frame.pack(fill="x")
@@ -53,7 +50,6 @@ class App(tk.Tk):
         self.create_fetch_widgets()
         self.create_apply_widgets()
         self.create_rollback_widgets()
-        # --- NEW: Call method to create the advanced settings section ---
         self.create_advanced_widgets()
         self.create_output_widgets()
         
@@ -99,25 +95,19 @@ class App(tk.Tk):
         ttk.Button(frame, text="Run Rollback", command=self.on_rollback).grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
         frame.columnconfigure(1, weight=1)
 
-    # --- NEW: Method to create the advanced settings UI ---
     def create_advanced_widgets(self):
-        """Creates widgets for advanced or infrequent actions."""
         frame = ttk.LabelFrame(self.main_frame, text="Advanced Settings", padding="10")
         frame.pack(fill="x", expand=False, pady=5)
-        
         ttk.Button(frame, text="Switch User Account", command=self.on_reset_auth).pack(side="left", padx=5, pady=5)
         ttk.Label(frame, text="Deletes the saved login token to allow a different Google user to sign in on the next run.").pack(side="left", padx=10, fill="x")
-        
         frame.columnconfigure(1, weight=1)
 
     def create_output_widgets(self):
         frame = ttk.LabelFrame(self.main_frame, text="Output Log", padding="10")
         frame.pack(fill="both", expand=True, pady=5)
-        
         button_frame = ttk.Frame(frame)
         button_frame.pack(fill="x", pady=(0, 5))
         ttk.Button(button_frame, text="Clear Log", command=self.clear_output).pack(side="right")
-        
         self.output_text = tk.Text(frame, wrap="word", height=10, font=("Courier New", 9))
         self.output_text.pack(fill="both", expand=True)
 
@@ -137,38 +127,82 @@ class App(tk.Tk):
     def on_fetch(self):
         self.clear_output(); folder_id = self.fetch_id_var.get()
         if not folder_id: messagebox.showerror("Error", "Please enter a Folder ID."); return
-        service = authenticate_and_get_service()
-        if not service: logging.critical("Authentication failed."); return
-        output_path = get_fetch_output_path(service, folder_id)
-        if not output_path: messagebox.showerror("Error", "Could not determine output path."); return
-        while os.path.exists(output_path):
-            try:
-                with open(output_path, 'a'): pass; break
-            except PermissionError:
-                if not messagebox.askyesno("File In Use", f"The report file is currently open:\n\n{output_path}\n\nPlease close the file to proceed.\n\nRetry?"):
-                    logging.warning("Fetch cancelled by user."); return
-            except Exception as e:
-                messagebox.showerror("Error", f"An unexpected error occurred: {e}"); return
-        logging.info("Pre-flight check passed. Starting fetch operation...")
         self.run_in_thread(run_fetch, folder_id, self.fetch_email_var.get() or None)
 
     def on_apply(self):
         excel_file, is_live = self.apply_file_var.get(), self.apply_live_var.get()
-        if not excel_file: messagebox.showerror("Error", "Please select a permissions Excel file."); return
-        if is_live and not messagebox.askyesno("Live Run Confirmation", "!!! WARNING !!!\nThis will apply changes to Google Drive.\n\nAre you sure?"):
-            logging.warning("Live Apply-Changes cancelled."); return
-        self.clear_output(); self.run_in_thread(run_apply_changes, excel_file, is_live)
+        if not excel_file:
+            messagebox.showerror("Error", "Please select a permissions Excel file.")
+            return
+
+        self.clear_output()
+        
+        plan, live_data, root_id = prepare_apply_changes(excel_file)
+
+        if plan is None:
+            messagebox.showerror("Error", "Failed to prepare changes. Please check the logs for details.")
+            return
+
+        affected_item_ids = {action['Item ID'] for action in plan}
+        num_affected = len(affected_item_ids)
+
+        if num_affected == 0:
+            messagebox.showinfo("No Changes", "No changes were detected between the Excel file and the current Google Drive state.")
+            return
+
+        confirmation_message = (
+            f"This operation will affect {num_affected} file(s)/folder(s).\n\n"
+            f"Mode: {'**LIVE RUN**' if is_live else 'Dry Run (No changes will be made)'}\n\n"
+            "Do you want to proceed?"
+        )
+        
+        if messagebox.askyesno("Confirm Action", confirmation_message):
+            logging.info(f"User confirmed. Executing plan with {len(plan)} actions...")
+            self.run_in_thread(execute_apply_changes, plan, live_data, root_id, is_live)
+        else:
+            logging.warning("Operation cancelled by user.")
 
     def on_rollback(self):
+        """
+        Handles the new two-step rollback process:
+        1. Prepare the plan (blocking, in main thread).
+        2. Ask for confirmation.
+        3. Execute the plan (non-blocking, in a new thread).
+        """
         log_file, is_live = self.log_file_var.get(), self.rollback_live_var.get()
-        if not log_file: messagebox.showerror("Error", "Please select an audit log file."); return
-        if is_live and not messagebox.askyesno("Live Rollback Confirmation", "!!! WARNING !!!\nThis will revert permissions on Google Drive.\n\nAre you sure?"):
-            logging.warning("Live Rollback cancelled."); return
-        self.clear_output(); self.run_in_thread(run_rollback, log_file, is_live)
+        if not log_file:
+            messagebox.showerror("Error", "Please select an audit log file.")
+            return
 
-    # --- NEW: Method to handle the 'Switch User Account' button click ---
+        self.clear_output()
+        
+        plan, live_data, root_id = prepare_rollback(log_file)
+
+        if plan is None:
+            messagebox.showerror("Error", "Failed to prepare rollback. Please check the logs for details.")
+            return
+
+        affected_item_ids = {action['Item ID'] for action in plan}
+        num_affected = len(affected_item_ids)
+
+        if num_affected == 0:
+            messagebox.showinfo("No Changes", "No successful actions found in the audit log to roll back.")
+            return
+
+        confirmation_message = (
+            f"This rollback operation will affect {num_affected} file(s)/folder(s).\n\n"
+            f"Mode: {'**LIVE ROLLBACK**' if is_live else 'Dry Run (No changes will be made)'}\n\n"
+            "This will revert permissions on Google Drive.\n\n"
+            "Are you sure you want to proceed?"
+        )
+        
+        if messagebox.askyesno("Confirm Rollback", confirmation_message):
+            logging.info(f"User confirmed. Executing rollback plan with {len(plan)} actions...")
+            self.run_in_thread(execute_rollback, plan, live_data, root_id, is_live)
+        else:
+            logging.warning("Rollback operation cancelled by user.")
+
     def on_reset_auth(self):
-        """Handles the logic for the 'Switch User Account' button."""
         if messagebox.askyesno("Confirm Action", "This will log you out. You will need to re-authenticate on the next action.\n\nAre you sure you want to proceed?"):
             if reset_authentication():
                 messagebox.showinfo("Success", "Authentication has been reset.\n\nYou will be prompted to log in with a new Google account on the next run.")

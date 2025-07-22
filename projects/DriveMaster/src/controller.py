@@ -8,7 +8,7 @@ import pandas as pd
 from .auth import authenticate_and_get_service
 from .report_generator import generate_permission_report
 from .spreadsheet_handler import write_report_to_csv, write_report_to_excel, save_audit_log
-from .permission_manager import process_changes, generate_rollback_actions
+from .permission_manager import process_changes, generate_rollback_actions, plan_changes
 
 def _setup_project_directories():
     """Ensures that all necessary output directories exist."""
@@ -59,84 +59,111 @@ def run_fetch(folder_id, user_email=None):
     logging.info("--- Fetch complete ---")
     return True
 
-def run_apply_changes(excel_path, is_live_run, root_id_override=None):
-    _setup_project_directories()
-    logging.info("--- Authenticating for Apply-Changes ---")
+def prepare_apply_changes(excel_path):
+    """
+    Reads the input file, fetches live data, and creates an execution plan.
+    Returns the plan and the live data for the execution phase.
+    """
+    logging.info("--- Preparing to Apply Changes ---")
     service = authenticate_and_get_service()
-    if not service: logging.critical("Authentication failed."); return False
+    if not service:
+        logging.critical("Authentication failed during preparation."); return None, None, None
 
-    audit_trail, root_id_from_file = process_changes(service, input_excel_path=excel_path, dry_run=not is_live_run)
-    
-    actual_root_id = root_id_override if root_id_override else root_id_from_file
-    if not actual_root_id or actual_root_id == 'N/A_RootID_FromProcess':
-        logging.error("Could not determine Root Folder ID."); return False
-    
-    if not audit_trail: return True
+    try:
+        input_df = pd.read_excel(excel_path, dtype=str).fillna('')
+        if 'Root Folder ID' not in input_df.columns or input_df.empty:
+            raise ValueError("Input file missing 'Root Folder ID' or is empty.")
+        root_id = str(input_df.iloc[0]['Root Folder ID'])
+    except Exception as e:
+        logging.error(f"Failed to read or validate Excel file {excel_path}: {e}"); return None, None, None
 
-    root_folder_name = _sanitize_filename(_get_item_name(service, actual_root_id))
+    logging.info("Fetching current file states from Google Drive for comparison...")
+    live_data = generate_permission_report(service, root_id)
+    live_data_df = pd.DataFrame(live_data)
+
+    execution_plan = plan_changes(input_df, live_data_df)
+    
+    return execution_plan, live_data, root_id
+
+def execute_apply_changes(plan, live_report_data, root_id, is_live_run):
+    """
+    Executes a pre-generated plan of changes.
+    """
+    logging.info("--- Executing Apply Changes ---")
+    service = authenticate_and_get_service()
+    if not service:
+        logging.critical("Authentication failed during execution."); return False
+
+    root_folder_name = _sanitize_filename(_get_item_name(service, root_id))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     logging.info("Generating pre-apply changes archive...")
-    if write_report_to_csv(generate_permission_report(service, actual_root_id), os.path.join('archives', f"{timestamp}_apply_{root_folder_name}_pre_changes.csv")):
+    if write_report_to_csv(live_report_data, os.path.join('archives', f"{timestamp}_apply_{root_folder_name}_pre_changes.csv")):
         logging.info(f"Successfully created pre-apply changes archive.")
 
+    audit_trail, _ = process_changes(service, plan=plan, root_folder_id=root_id, dry_run=not is_live_run)
+    
+    if not audit_trail:
+        logging.info("No actions were performed.")
+        return True
+
     save_audit_log(audit_trail, os.path.join('logs', f"{timestamp}_apply_{root_folder_name}_audit.csv"))
-    logging.info("--- Apply-Changes complete ---")
+    logging.info("--- Apply-Changes execution complete ---")
     return True
 
-def run_rollback(log_file_path, is_live_run, root_id_override=None):
-    _setup_project_directories()
-    logging.info("--- Authenticating for Rollback ---")
+def prepare_rollback(log_file_path, root_id_override=None):
+    """
+    Reads the audit log, fetches live data, and creates a rollback plan.
+    Returns the plan, live data, and root_id.
+    """
+    logging.info("--- Preparing Rollback ---")
     service = authenticate_and_get_service()
-    if not service: logging.critical("Authentication failed."); return False
+    if not service:
+        logging.critical("Authentication failed during preparation."); return None, None, None
 
     try:
         log_file_abs = Path(log_file_path).resolve()
         if not Path("./logs").resolve() in log_file_abs.parents:
-            logging.error("Security Error: Log file must be inside 'logs' directory."); return False
+            logging.error("Security Error: Log file must be inside 'logs' directory."); return None, None, None
         audit_log_df = pd.read_csv(log_file_abs).fillna('')
         if 'Root Folder ID' not in audit_log_df.columns or audit_log_df.empty:
             raise ValueError("Log is invalid or empty.")
         root_id_from_log = str(audit_log_df['Root Folder ID'].iloc[0])
         if not root_id_from_log: raise ValueError("'Root Folder ID' in log is blank.")
     except Exception as e:
-        logging.error(f"Failed to read or process audit log '{log_file_path}': {e}"); return False
+        logging.error(f"Failed to read or process audit log '{log_file_path}': {e}"); return None, None, None
     
     actual_root_id = root_id_override if root_id_override else root_id_from_log
-    root_folder_name = _sanitize_filename(_get_item_name(service, actual_root_id))
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    logging.info(f"Fetching live permission data once for all operations...")
+
+    logging.info(f"Fetching live permission data for rollback comparison...")
     live_report_data = generate_permission_report(service, actual_root_id)
 
+    rollback_plan = generate_rollback_actions(log_file_abs, live_report_data)
+    
+    return rollback_plan, live_report_data, actual_root_id
+
+def execute_rollback(plan, live_report_data, root_id, is_live_run):
+    """
+    Executes a pre-generated rollback plan.
+    """
+    logging.info("--- Executing Rollback ---")
+    service = authenticate_and_get_service()
+    if not service:
+        logging.critical("Authentication failed during execution."); return False
+
+    root_folder_name = _sanitize_filename(_get_item_name(service, root_id))
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     logging.info("Generating pre-rollback archive...")
     if write_report_to_csv(live_report_data, os.path.join('archives', f"{timestamp}_rollback_{root_folder_name}_pre_rollback.csv")):
         logging.info(f"Successfully created pre-rollback archive.")
     
-    rollback_actions = generate_rollback_actions(log_file_abs, live_report_data)
-    if not rollback_actions: 
-        logging.info("No actions to perform for rollback."); return True
-
-    temp_excel_path = os.path.join(tempfile.gettempdir(), f'temp_rollback_{timestamp}.xlsx')
-    try:
-        # --- MODIFIED: The column list now matches the full, current format ---
-        # This ensures the temporary file for rollback has the correct columns.
-        cols = [
-            'Full Path', 'Item Name', 'Item ID', 'Role', 'Principal Type', 
-            'Email Address', 'Owner', 'Google Drive URL', 'Root Folder ID', 
-            'Current Download Restriction', 'Action_Type', 'New_Role', 
-            'Type of account (for ADD)', 'Email/Domain (for ADD)', 'SET Download Restriction'
-        ]
-        pd.DataFrame(rollback_actions).reindex(columns=cols).fillna('').to_excel(temp_excel_path, index=False)
-        # --- END MODIFICATION ---
-    except Exception as e:
-        logging.error(f"Failed to write temporary rollback file: {e}"); return False
-
-    audit_trail, _ = process_changes(service, input_excel_path=temp_excel_path, dry_run=not is_live_run, live_report_data=live_report_data)
-    os.remove(temp_excel_path)
-    logging.info(f"Temporary rollback file deleted: {temp_excel_path}")
+    audit_trail, _ = process_changes(service, plan=plan, root_folder_id=root_id, dry_run=not is_live_run)
     
-    if audit_trail:
-        save_audit_log(audit_trail, os.path.join('logs', f"{timestamp}_rollback_{root_folder_name}_audit.csv"))
-    
-    logging.info("--- Rollback complete ---")
+    if not audit_trail:
+        logging.info("No rollback actions were performed.")
+        return True
+
+    save_audit_log(audit_trail, os.path.join('logs', f"{timestamp}_rollback_{root_folder_name}_audit.csv"))
+    logging.info("--- Rollback execution complete ---")
     return True
