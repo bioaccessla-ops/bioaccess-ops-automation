@@ -1,5 +1,3 @@
-# src/auth.py
-
 import os
 import sys
 import logging
@@ -60,18 +58,26 @@ def authenticate_and_get_service():
                 logging.error(f"\n---Authentication flow failed or timed out. (Error: {e})---\n"); return None
 
     try:
-        # *** MODIFIED: Using the correct, modern pattern for a non-cached, authorized http object ***
-        
-        # 1. Create a raw httplib2 object with caching disabled.
         http_obj = httplib2.Http(cache=None)
-        
-        # 2. Use the google_auth_httplib2 bridge to create an authorized http object.
         authed_http = google_auth_httplib2.AuthorizedHttp(creds, http=http_obj)
-        
-        # 3. Build the service using this fully compatible, non-cached, authorized object.
         service = build('drive', 'v3', http=authed_http, cache_discovery=False)
-        
         logging.info("Google Drive service created successfully (ALL caching disabled).")
         return service
     except Exception as e:
         logging.error(f"Failed to build Drive service: {e}"); return None
+
+def reset_authentication():
+    """
+    Deletes the token.json file to force re-authentication on the next run.
+    Returns True on success (or if file did not exist), False on failure.
+    """
+    try:
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+            logging.info(f"Authentication token deleted: {TOKEN_FILE}")
+        else:
+            logging.info("No authentication token to delete.")
+        return True
+    except Exception as e:
+        logging.error(f"Failed to delete token file at {TOKEN_FILE}: {e}")
+        return False

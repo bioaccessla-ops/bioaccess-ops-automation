@@ -1,5 +1,3 @@
-# gui.py
-
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
@@ -10,7 +8,8 @@ from PIL import Image, ImageTk
 
 # Import the controller functions
 from src.controller import run_fetch, run_apply_changes, run_rollback, get_fetch_output_path
-from src.auth import authenticate_and_get_service
+# --- MODIFIED: Import the new reset_authentication function ---
+from src.auth import authenticate_and_get_service, reset_authentication
 
 # --- Custom Logging Handler to safely update the GUI from other threads ---
 class GuiHandler(logging.Handler):
@@ -26,32 +25,27 @@ class App(tk.Tk):
         super().__init__()
 
         self.title("DriveMaster Control Panel")
-        self.geometry("750x650")
+        self.geometry("750x700") # Increased height slightly for the new section
 
-        # --- MODIFIED: Header layout updated for centering ---
         header_frame = ttk.Frame(self, padding=(10, 10, 10, 0))
         header_frame.pack(fill="x")
-        # Make the outer columns expand, pushing the middle one to the center
         header_frame.columnconfigure(0, weight=1)
         header_frame.columnconfigure(2, weight=1)
 
-        # Create a container for the logo and title to keep them together
         title_container = ttk.Frame(header_frame)
-        title_container.grid(row=0, column=1) # Place container in the center column
+        title_container.grid(row=0, column=1)
 
         self.logo_image = None
         try:
             logo_path = os.path.join(os.path.dirname(__file__), 'assets', 'logo.png')
             img = Image.open(logo_path)
-            img.thumbnail((150, 60)) # Adjusted size slightly
+            img.thumbnail((150, 60))
             self.logo_image = ImageTk.PhotoImage(img)
             ttk.Label(title_container, image=self.logo_image).pack(side="left", padx=(0, 10))
         except FileNotFoundError:
             ttk.Label(title_container, text="[Logo]", font=('Helvetica', 12, 'italic')).pack(side="left", padx=(0, 10))
             
-        # Add the new, more eye-catching title
         ttk.Label(title_container, text='DriveMaster: Permissions Control Panel', font=('Helvetica', 16, 'bold')).pack(side="left")
-        # --- END MODIFICATION ---
 
         self.main_frame = ttk.Frame(self, padding="10")
         self.main_frame.pack(fill="both", expand=True)
@@ -59,6 +53,8 @@ class App(tk.Tk):
         self.create_fetch_widgets()
         self.create_apply_widgets()
         self.create_rollback_widgets()
+        # --- NEW: Call method to create the advanced settings section ---
+        self.create_advanced_widgets()
         self.create_output_widgets()
         
         self.log_queue = Queue()
@@ -101,6 +97,17 @@ class App(tk.Tk):
         self.rollback_live_var = tk.BooleanVar()
         ttk.Checkbutton(frame, text="Perform LIVE rollback (default is a safe Dry Run)", variable=self.rollback_live_var).grid(row=1, column=0, columnspan=3, sticky="w", padx=5)
         ttk.Button(frame, text="Run Rollback", command=self.on_rollback).grid(row=2, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        frame.columnconfigure(1, weight=1)
+
+    # --- NEW: Method to create the advanced settings UI ---
+    def create_advanced_widgets(self):
+        """Creates widgets for advanced or infrequent actions."""
+        frame = ttk.LabelFrame(self.main_frame, text="Advanced Settings", padding="10")
+        frame.pack(fill="x", expand=False, pady=5)
+        
+        ttk.Button(frame, text="Switch User Account", command=self.on_reset_auth).pack(side="left", padx=5, pady=5)
+        ttk.Label(frame, text="Deletes the saved login token to allow a different Google user to sign in on the next run.").pack(side="left", padx=10, fill="x")
+        
         frame.columnconfigure(1, weight=1)
 
     def create_output_widgets(self):
@@ -158,6 +165,15 @@ class App(tk.Tk):
         if is_live and not messagebox.askyesno("Live Rollback Confirmation", "!!! WARNING !!!\nThis will revert permissions on Google Drive.\n\nAre you sure?"):
             logging.warning("Live Rollback cancelled."); return
         self.clear_output(); self.run_in_thread(run_rollback, log_file, is_live)
+
+    # --- NEW: Method to handle the 'Switch User Account' button click ---
+    def on_reset_auth(self):
+        """Handles the logic for the 'Switch User Account' button."""
+        if messagebox.askyesno("Confirm Action", "This will log you out. You will need to re-authenticate on the next action.\n\nAre you sure you want to proceed?"):
+            if reset_authentication():
+                messagebox.showinfo("Success", "Authentication has been reset.\n\nYou will be prompted to log in with a new Google account on the next run.")
+            else:
+                messagebox.showerror("Error", "Could not delete the authentication token file. Please check the logs or file permissions.")
 
 if __name__ == "__main__":
     app = App()
