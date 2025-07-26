@@ -200,3 +200,6 @@ credentials
 credentials.json
 token.json
 credentials_DeskApp.json
+
+# ---  IGNORE YOUR SERVICE ACCOUNT KEY ---
+projects/QB_2_Sheets_Integragtion/keys/service_account_key.json
