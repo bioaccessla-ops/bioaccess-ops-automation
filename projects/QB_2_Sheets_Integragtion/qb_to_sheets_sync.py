@@ -279,4 +279,4 @@ def run_automation():
         print(f"An unexpected error occurred during automation: {e}")
 
 if __name__ == "__main__":
-    run_automation()
+    run_automation() 
