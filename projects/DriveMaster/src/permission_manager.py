@@ -17,16 +17,17 @@ def _find_permission_id(drive_service, file_id, p_type, p_address, p_role_api):
         logging.error(f"Could not list permissions for file {file_id}: {e}")
     return None
 
-def generate_rollback_actions(audit_log_path, live_report_data):
+def generate_rollback_actions(audit_log_path, live_report_data, auth_user_email):
     logging.info(f"Generating rollback actions from audit log: {audit_log_path}")
+    self_modification_detected = False
     try:
         audit_log_df = pd.read_csv(audit_log_path).fillna('')
         successful_actions_df = audit_log_df[audit_log_df['Status'] == 'SUCCESS'].copy()
     except Exception as e:
-        logging.error(f"Failed to read or parse audit log file {audit_log_path}: {e}"); return []
+        logging.error(f"Failed to read or parse audit log file {audit_log_path}: {e}"); return [], False
     
     if successful_actions_df.empty:
-        logging.info("No successful actions found in the log to roll back."); return []
+        logging.info("No successful actions found in the log to roll back."); return [], False
 
     item_metadata_map = {item['Item ID']: {'Item Name': item['Item Name'], 'Full Path': item['Full Path']} for item in live_report_data}
     root_folder_id = live_report_data[0]['Root Folder ID'] if live_report_data else ''
@@ -36,6 +37,12 @@ def generate_rollback_actions(audit_log_path, live_report_data):
         item_id, cmd = str(log_entry['Item ID']), str(log_entry['Action_Command'])
         metadata = item_metadata_map.get(item_id, {'Item Name': 'N/A', 'Full Path': 'N/A'})
         action = {'Item ID': item_id, 'Full Path': metadata['Full Path'], 'Item Name': metadata['Item Name'], 'Root Folder ID': root_folder_id}
+        
+        original_email = str(log_entry.get('Original_Email_Address', '')).lower()
+        new_email = str(log_entry.get('New_Email_Address', '')).lower()
+        if auth_user_email and (auth_user_email.lower() == original_email or auth_user_email.lower() == new_email):
+            self_modification_detected = True
+
         if cmd == 'ADD':
             action.update({'Action_Type': 'REMOVE', 'Principal Type': log_entry['New_Principal_Type'], 'Email Address': log_entry['New_Email_Address'], 'Role': log_entry['New_Role']})
         elif cmd == 'REMOVE':
@@ -43,32 +50,21 @@ def generate_rollback_actions(audit_log_path, live_report_data):
         elif cmd == 'MODIFY':
             action.update({'Action_Type': 'MODIFY', 'Principal Type': log_entry['Original_Principal_Type'], 'Email Address': log_entry['Original_Email_Address'], 'Role': log_entry['New_Role'], 'New_Role': log_entry['Original_Role']})
         elif cmd == 'SET_DOWNLOAD_RESTRICTION':
-            # --- FIXED: Create a plan with the same keys that process_changes expects. ---
-            # The 'Original_Role' from the log is the state we want to roll back TO (Desired_State).
-            # The 'New_Role' from the log is the state that was set, which is now the current state we are rolling back FROM (Original_State).
-            action.update({
-                'Action_Type': 'SET_DOWNLOAD_RESTRICTION',
-                'Original_State': str(log_entry['New_Role']),
-                'Desired_State': str(log_entry['Original_Role'])
-            })
+            action.update({'Action_Type': 'SET_DOWNLOAD_RESTRICTION', 'Original_State': str(log_entry['New_Role']), 'Desired_State': str(log_entry['Original_Role'])})
         
         if action.get('Action_Type'):
             actions_to_perform.append(action)
             
-    return actions_to_perform
+    return actions_to_perform, self_modification_detected
 
-def plan_changes(input_df, live_data_df):
-    """
-    Scans the input dataframe against live data to create an execution plan.
-    Returns a list of action dictionaries (the plan).
-    """
+def plan_changes(input_df, live_data_df, auth_user_email):
     logging.info("Planning potential changes by comparing the input file to live data...")
     action_plan = []
+    self_modification_detected = False
 
     for item_id, item_group_df in input_df.groupby('Item ID'):
         file_info = item_group_df.iloc[0]
 
-        # Plan download restriction changes
         restrictions = [str(val).strip().upper() for val in item_group_df['SET Download Restriction'].tolist() if str(val).strip()]
         desired_restr = restrictions[0] if restrictions else ''
         
@@ -85,19 +81,24 @@ def plan_changes(input_df, live_data_df):
                 action['Desired_State'] = desired_restr
                 action_plan.append(action)
 
-        # Plan permission changes
         action_rows = item_group_df[item_group_df['Action_Type'].str.strip() != ''].copy()
         for _, row in action_rows.iterrows():
             action = row.to_dict()
             action_plan.append(action)
             
+            cmd = str(row.get('Action_Type', '')).upper()
+            if cmd in ['REMOVE', 'MODIFY']:
+                email_to_check = str(row.get('Email Address', '')).lower()
+                if auth_user_email and email_to_check == auth_user_email.lower():
+                    self_modification_detected = True
+            
     logging.info(f"Planning complete. Found {len(action_plan)} potential actions.")
-    return action_plan
+    if self_modification_detected:
+        logging.warning("SELF-MODIFICATION DETECTED: The planned changes will alter the current user's own permissions.")
+        
+    return action_plan, self_modification_detected
 
 def process_changes(drive_service, plan, root_folder_id, dry_run=True):
-    """
-    Executes a pre-defined plan of changes. This function only performs actions, it does not calculate them.
-    """
     if not dry_run:
         logging.warning("--- Starting Live Mode: Changes WILL be applied to Google Drive. ---")
     else:
@@ -121,12 +122,17 @@ def process_changes(drive_service, plan, root_folder_id, dry_run=True):
         
         try:
             if cmd == 'SET_DOWNLOAD_RESTRICTION':
-                original_str = action.get('Original_State')
-                desired_str = action.get('Desired_State')
-                details = f"Set Restrict Download from '{original_str}' to '{desired_str}'"
-                drive_service.files().update(fileId=item_id, body={'copyRequiresWriterPermission': (desired_str == 'TRUE')}).execute()
-                entry.update({'Details': details, 'Original_Role': original_str, 'New_Role': desired_str, 'Status': 'SUCCESS'})
-                logging.info(f"[SUCCESS] {details} for Item ID: {item_id}")
+                if action.get('Mime Type') == 'application/vnd.google-apps.folder':
+                    details = "Skipped: Download restriction cannot be set on a folder."
+                    logging.warning(f"[SKIPPED] Cannot set download restriction on folder '{action.get('Item Name')}'.")
+                    entry.update({'Details': details, 'Status': 'SKIPPED'})
+                else:
+                    original_str = action.get('Original_State')
+                    desired_str = action.get('Desired_State')
+                    details = f"Set Restrict Download from '{original_str}' to '{desired_str}'"
+                    drive_service.files().update(fileId=item_id, body={'copyRequiresWriterPermission': (desired_str == 'TRUE')}).execute()
+                    entry.update({'Details': details, 'Original_Role': original_str, 'New_Role': desired_str, 'Status': 'SUCCESS'})
+                    logging.info(f"[SUCCESS] {details} for Item ID: {item_id}")
 
             elif cmd == 'ADD':
                 p_type, p_address, p_role_ui = str(action.get('Type of account (for ADD)')).lower(), str(action.get('Email/Domain (for ADD)')), str(action.get('New_Role'))

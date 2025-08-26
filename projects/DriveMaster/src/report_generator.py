@@ -16,6 +16,9 @@ def get_file_permissions(drive_service, file_id, max_retries=5):
             return response.get('permissions', [])
         except HttpError as e:
             if e.resp.status in [403, 429, 500, 502, 503, 504]:
+                if e.resp.status == 403 and "insufficientFilePermissions" in str(e):
+                    logging.warning(f"Insufficient permissions for file {file_id}. Cannot fetch permissions. Skipping retries.")
+                    return []
                 wait = (2 ** retries) + random.random()
                 logging.warning(f"Permissions fetch for {file_id} failed with status {e.resp.status}. Retrying in {wait:.1f}s... ({retries + 1}/{max_retries})")
                 time.sleep(wait)
@@ -65,21 +68,31 @@ def list_files_recursively(drive_service, folder_id, current_path="", max_retrie
     return all_items
 
 
-def generate_permission_report(drive_service, folder_id, user_email=None):
+def generate_permission_report(drive_service, folder_id, user_email=None, progress_callback=None):
     """
-    Generates a detailed permission report for all items under a folder.
+    Generates a detailed permission report, with an optional callback for progress.
     """
     logging.info(f"Starting report generation for folder ID: {folder_id}")
     if user_email:
         logging.info(f"Filtering report to only include permissions for: {user_email}")
 
+    logging.info("Discovering all items in the folder structure...")
     all_items = list_files_recursively(drive_service, folder_id)
-    logging.info(f"Found {len(all_items)} total items to scan for permissions.")
+    total_items = len(all_items)
+    logging.info(f"Found {total_items} total items to scan for permissions.")
     
+    if progress_callback:
+        progress_callback(0, total_items) # Initialize the progress bar
+
     report_data = []
     for i, item in enumerate(all_items):
         item_id = item.get('id')
-        logging.info(f"Processing item {i+1}/{len(all_items)}: '{item.get('name')}' ({item_id})")
+        
+        # Log to console, not to the GUI, to avoid clutter.
+        print(f"Processing item {i+1}/{total_items}: '{item.get('name')}'")
+
+        if progress_callback:
+            progress_callback(i + 1, total_items) # Update progress
 
         try:
             if item.get('mimeType') == 'application/vnd.google-apps.folder':
@@ -88,36 +101,34 @@ def generate_permission_report(drive_service, folder_id, user_email=None):
                 file_metadata = drive_service.files().get(fileId=item_id, fields='copyRequiresWriterPermission').execute()
                 is_restricted = file_metadata.get('copyRequiresWriterPermission', False)
         except HttpError as e:
-            logging.warning(f"Could not get metadata for '{item.get('name')}' ({item_id}). This is expected for folders. Error: {e}")
+            logging.warning(f"Could not get metadata for '{item.get('name')}' ({item_id}). Error: {e}")
             is_restricted = "N/A"
 
         permissions = get_file_permissions(drive_service, item_id)
-        if not permissions and is_restricted == "N/A":
-            continue
-
         owner = item.get('owners', [{}])[0].get('emailAddress', 'N/A')
-        for p in permissions:
-            if user_email:
-                permission_email = p.get('emailAddress', '').lower()
-                if permission_email != user_email.lower():
-                    continue
-            
-            ui_role = ROLE_MAP.get(p.get('role'), str(p.get('role')).capitalize())
-            ui_principal_type = ROLE_MAP.get(p.get('type'), str(p.get('type')).capitalize())
-
-            report_data.append({
-                'Full Path': item.get('path'),
-                'Item Name': item.get('name'),
-                'Item ID': item_id,
-                # --- MODIFIED: Key name changed for clarity in the new design ---
-                'Current Download Restriction': str(is_restricted).upper(),
-                'Role': ui_role,
-                'Principal Type': ui_principal_type,
-                'Email Address': p.get('emailAddress') or p.get('domain') or ('anyoneWithLink' if p.get('type') == 'anyone' else 'N/A'),
-                'Owner': owner,
-                'Google Drive URL': item.get('webViewLink'),
-                'Root Folder ID': folder_id,
+        
+        if not permissions:
+             report_data.append({
+                'Full Path': item.get('path'), 'Item Name': item.get('name'), 'Item ID': item_id,
+                'Mime Type': item.get('mimeType'), 'Current Download Restriction': str(is_restricted).upper(),
+                'Role': "No Permissions Found", 'Principal Type': "N/A", 'Email Address': "N/A",
+                'Owner': owner, 'Google Drive URL': item.get('webViewLink'), 'Root Folder ID': folder_id,
             })
+        else:
+            for p in permissions:
+                if user_email and p.get('emailAddress', '').lower() != user_email.lower():
+                    continue
+                
+                ui_role = ROLE_MAP.get(p.get('role'), str(p.get('role')).capitalize())
+                ui_principal_type = ROLE_MAP.get(p.get('type'), str(p.get('type')).capitalize())
+
+                report_data.append({
+                    'Full Path': item.get('path'), 'Item Name': item.get('name'), 'Item ID': item_id,
+                    'Mime Type': item.get('mimeType'), 'Current Download Restriction': str(is_restricted).upper(),
+                    'Role': ui_role, 'Principal Type': ui_principal_type,
+                    'Email Address': p.get('emailAddress') or p.get('domain') or ('anyoneWithLink' if p.get('type') == 'anyone' else 'N/A'),
+                    'Owner': owner, 'Google Drive URL': item.get('webViewLink'), 'Root Folder ID': folder_id,
+                })
             
     logging.info(f"Generated {len(report_data)} permission entries for the final report.")
     return report_data
