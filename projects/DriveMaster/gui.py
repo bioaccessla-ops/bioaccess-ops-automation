@@ -23,7 +23,7 @@ class App(tk.Tk):
         super().__init__()
 
         self.title("DriveMaster Control Panel")
-        self.geometry("750x750") # Increased height for progress bar
+        self.geometry("900x900")
 
         try:
             icon_path = os.path.join(os.path.dirname(__file__), 'assets', 'app_icon.ico')
@@ -46,14 +46,23 @@ class App(tk.Tk):
             
         ttk.Label(title_container, text='DriveMaster: Permissions Control Panel', font=('Helvetica', 16, 'bold')).pack(side="left")
 
-        self.main_frame = ttk.Frame(self, padding="10")
-        self.main_frame.pack(fill="both", expand=True)
+        main_canvas = tk.Canvas(self)
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=main_canvas.yview)
+        self.scrollable_frame = ttk.Frame(main_canvas, padding="10")
+
+        self.scrollable_frame.bind("<Configure>", lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all")))
+        self.canvas_window = main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        main_canvas.bind("<Configure>", lambda e: main_canvas.itemconfig(self.canvas_window, width=e.width))
+        
+        main_canvas.configure(yscrollcommand=scrollbar.set)
+        main_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
         
         self.create_fetch_widgets()
         self.create_apply_widgets()
         self.create_rollback_widgets()
         self.create_advanced_widgets()
-        self.create_progress_widgets() # New progress bar section
+        self.create_progress_widgets()
         self.create_output_widgets()
         
         self.log_queue = Queue()
@@ -63,8 +72,8 @@ class App(tk.Tk):
         self.after(100, self.poll_log_queue)
 
     def create_fetch_widgets(self):
-        frame = ttk.LabelFrame(self.main_frame, text="1. Fetch Permissions", padding="10")
-        frame.pack(fill="x", expand=False, pady=5)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="1. Fetch Permissions", padding="10")
+        frame.pack(fill="x", pady=5)
         ttk.Label(frame, text="Google Drive Folder ID:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         self.fetch_id_var = tk.StringVar()
         ttk.Entry(frame, textvariable=self.fetch_id_var).grid(row=0, column=1, sticky="ew", padx=5)
@@ -73,8 +82,8 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
 
     def create_apply_widgets(self):
-        frame = ttk.LabelFrame(self.main_frame, text="2. Apply Changes", padding="10")
-        frame.pack(fill="x", expand=False, pady=5)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="2. Apply Changes", padding="10")
+        frame.pack(fill="x", pady=5)
         self.apply_file_var = tk.StringVar()
         ttk.Label(frame, text="Permissions Excel File:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         ttk.Entry(frame, textvariable=self.apply_file_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=5)
@@ -86,8 +95,8 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
 
     def create_rollback_widgets(self):
-        frame = ttk.LabelFrame(self.main_frame, text="3. Rollback Changes", padding="10")
-        frame.pack(fill="x", expand=False, pady=5)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="3. Rollback Changes", padding="10")
+        frame.pack(fill="x", pady=5)
         self.log_file_var = tk.StringVar()
         ttk.Label(frame, text="Audit Log File:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         ttk.Entry(frame, textvariable=self.log_file_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=5)
@@ -99,24 +108,22 @@ class App(tk.Tk):
         frame.columnconfigure(1, weight=1)
 
     def create_advanced_widgets(self):
-        frame = ttk.LabelFrame(self.main_frame, text="Advanced Settings", padding="10")
-        frame.pack(fill="x", expand=False, pady=5)
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Advanced Settings", padding="10")
+        frame.pack(fill="x", pady=5)
         ttk.Button(frame, text="Switch User Account", command=self.on_reset_auth).pack(side="left", padx=5, pady=5)
         ttk.Label(frame, text="Deletes the saved login token to allow a different Google user to sign in.").pack(side="left", padx=10, fill="x")
 
     def create_progress_widgets(self):
-        self.progress_frame = ttk.LabelFrame(self.main_frame, text="Progress", padding="10")
-        self.progress_frame.pack(fill="x", expand=False, pady=5)
-        
-        self.progress_label = ttk.Label(self.progress_frame, text="Idle")
-        self.progress_label.pack(fill="x", expand=True, side="left", padx=5)
-        
+        self.progress_frame = ttk.LabelFrame(self.scrollable_frame, text="Progress", padding="10")
         self.progress_bar = ttk.Progressbar(self.progress_frame, orient="horizontal", mode="determinate")
-        self.progress_bar.pack(fill="x", expand=True, side="right")
-        self.progress_frame.pack_forget() # Hide by default
+        self.progress_bar.pack(fill="x", expand=True, pady=(0, 5))
+        self.progress_label = ttk.Label(self.progress_frame, text="Idle", anchor="center")
+        self.progress_label.pack(fill="x", expand=True)
 
     def create_output_widgets(self):
-        frame = ttk.LabelFrame(self.main_frame, text="Output Log", padding="10")
+        self.progress_frame.pack(fill="x", pady=5)
+        self.progress_frame.pack_forget()
+        frame = ttk.LabelFrame(self.scrollable_frame, text="Output Log", padding="10")
         frame.pack(fill="both", expand=True, pady=5)
         button_frame = ttk.Frame(frame)
         button_frame.pack(fill="x", pady=(0, 5))
@@ -138,43 +145,49 @@ class App(tk.Tk):
 
     def update_progress(self, current, total):
         if total > 0:
-            self.progress_bar['maximum'] = total
-            self.progress_bar['value'] = current
-            self.progress_label['text'] = f"Processing item {current} of {total}..."
+            percentage = (current / total) * 100
+            self.progress_bar['maximum'] = 100
+            self.progress_bar['value'] = percentage
+            self.progress_label['text'] = f"{int(percentage)}% Complete ({current} of {total} items)"
         else:
-            self.progress_label['text'] = "Discovering items..."
+            self.progress_label['text'] = "Operation in progress..."
             self.progress_bar['mode'] = 'indeterminate'
             self.progress_bar.start(10)
 
-    def on_fetch(self):
-        self.clear_output()
-        folder_id = self.fetch_id_var.get()
-        if not folder_id:
-            messagebox.showerror("Error", "Please enter a Folder ID.")
-            return
+    def set_ui_state(self, is_busy):
+        state = "disabled" if is_busy else "normal"
+        self.fetch_button.config(state=state)
+        self.apply_button.config(state=state)
+        self.rollback_button.config(state=state)
         
-        self.progress_frame.pack(fill="x", expand=False, pady=5)
+    def show_progress(self, initial_message="Discovering items..."):
+        self.progress_frame.pack(fill="x", pady=5, before=self.scrollable_frame.winfo_children()[-1])
+        self.progress_label['text'] = initial_message
         self.update_progress(0, 0)
-        
-        self.fetch_button.config(state="disabled")
-        self.run_in_thread(self._fetch_worker, folder_id, self.update_progress)
+        self.set_ui_state(True)
 
-    def _fetch_worker(self, folder_id, progress_callback):
-        report_data, output_path = run_fetch(folder_id, progress_callback=progress_callback)
-        self.after(0, self._on_fetch_complete, report_data, output_path)
-
-    def _on_fetch_complete(self, report_data, output_path):
-        self.fetch_button.config(state="normal")
+    def hide_progress(self):
+        self.set_ui_state(False)
         self.progress_frame.pack_forget()
         self.progress_bar.stop()
         self.progress_bar['mode'] = 'determinate'
 
-        if report_data is None:
-            logging.error("Fetch operation failed. Check logs for details.")
-            return
-        if not report_data:
-            logging.info("--- Fetch complete (no data to write) ---")
-            return
+    def on_fetch(self):
+        self.clear_output()
+        folder_id = self.fetch_id_var.get()
+        if not folder_id: return messagebox.showerror("Error", "Please enter a Folder ID.")
+        
+        self.show_progress()
+        self.run_in_thread(self._fetch_worker, folder_id)
+
+    def _fetch_worker(self, folder_id):
+        report_data, output_path = run_fetch(folder_id, progress_callback=self.update_progress)
+        self.after(0, self._on_fetch_complete, report_data, output_path)
+
+    def _on_fetch_complete(self, report_data, output_path):
+        self.hide_progress()
+        if report_data is None: return
+        if not report_data: return logging.info("--- Fetch complete (no data to write) ---")
 
         while True:
             try:
@@ -183,62 +196,88 @@ class App(tk.Tk):
                 logging.info("--- Fetch complete ---")
                 break 
             except PermissionError:
-                if not messagebox.askyesno("File In Use", f"The report file is currently open:\n\n{output_path}\n\nPlease close the file to proceed.\n\nRetry?"):
-                    logging.warning("Fetch cancelled by user during file write.")
+                if not messagebox.askyesno("File In Use", f"The report file is currently open:\n\n{output_path}\n\nPlease close it to proceed."):
+                    logging.warning("Fetch cancelled by user.")
                     break
             except Exception as e:
                 messagebox.showerror("Error", f"An unexpected error occurred: {e}")
                 break
 
     def on_apply(self):
-        excel_file, is_live = self.apply_file_var.get(), self.apply_live_var.get()
-        if not excel_file:
-            messagebox.showerror("Error", "Please select a permissions Excel file.")
-            return
+        excel_file = self.apply_file_var.get()
+        if not excel_file: return messagebox.showerror("Error", "Please select a permissions Excel file.")
 
         self.clear_output()
-        plan, live_data, root_id, self_mod_flag = prepare_apply_changes(excel_file)
+        self.show_progress("Preparing to apply changes...")
+        self.run_in_thread(self._apply_prepare_worker, excel_file)
 
-        if plan is None: return
-        num_affected = len({action['Item ID'] for action in plan})
+    def _apply_prepare_worker(self, excel_file):
+        plan, live_data, root_id, self_mod_flag = prepare_apply_changes(excel_file, progress_callback=self.update_progress)
+        self.after(0, self._on_apply_prepare_complete, plan, live_data, root_id, self_mod_flag)
 
-        if num_affected == 0:
-            messagebox.showinfo("No Changes", "No changes were detected.")
+    def _on_apply_prepare_complete(self, plan, live_data, root_id, self_mod_flag):
+        if plan is None:
+            self.hide_progress()
             return
+
+        num_affected = len({action['Item ID'] for action in plan})
+        if num_affected == 0:
+            self.hide_progress()
+            return messagebox.showinfo("No Changes", "No changes were detected.")
 
         if self_mod_flag and not messagebox.askyesno("Confirm Self-Modification", "!!! WARNING !!!\nThis operation will modify your own permissions. Are you sure?"):
-            logging.warning("Operation cancelled by user due to self-modification warning.")
-            return
+            self.hide_progress()
+            return logging.warning("Operation cancelled by user.")
 
+        is_live = self.apply_live_var.get()
         if messagebox.askyesno("Confirm Action", f"This will affect {num_affected} item(s).\nMode: {'LIVE' if is_live else 'Dry Run'}\nProceed?"):
-            self.run_in_thread(execute_apply_changes, plan, live_data, root_id, is_live)
+            self.show_progress(initial_message="Executing changes...")
+            self.run_in_thread(self._execute_apply_worker, plan, live_data, root_id, is_live)
         else:
+            self.hide_progress()
             logging.warning("Operation cancelled by user.")
 
+    def _execute_apply_worker(self, plan, live_data, root_id, is_live):
+        execute_apply_changes(plan, live_data, root_id, is_live, progress_callback=self.update_progress)
+        self.after(0, self.hide_progress)
+
     def on_rollback(self):
-        log_file, is_live = self.log_file_var.get(), self.rollback_live_var.get()
-        if not log_file:
-            messagebox.showerror("Error", "Please select an audit log file.")
-            return
+        log_file = self.log_file_var.get()
+        if not log_file: return messagebox.showerror("Error", "Please select an audit log file.")
 
         self.clear_output()
-        plan, live_data, root_id, self_mod_flag = prepare_rollback(log_file)
+        self.show_progress("Preparing rollback...")
+        self.run_in_thread(self._rollback_prepare_worker, log_file)
 
-        if plan is None: return
-        num_affected = len({action['Item ID'] for action in plan})
+    def _rollback_prepare_worker(self, log_file):
+        plan, live_data, root_id, self_mod_flag = prepare_rollback(log_file, progress_callback=self.update_progress)
+        self.after(0, self._on_rollback_prepare_complete, plan, live_data, root_id, self_mod_flag)
 
-        if num_affected == 0:
-            messagebox.showinfo("No Changes", "No actions to roll back.")
+    def _on_rollback_prepare_complete(self, plan, live_data, root_id, self_mod_flag):
+        if plan is None:
+            self.hide_progress()
             return
+        
+        num_affected = len({action['Item ID'] for action in plan})
+        if num_affected == 0:
+            self.hide_progress()
+            return messagebox.showinfo("No Changes", "No actions to roll back.")
 
         if self_mod_flag and not messagebox.askyesno("Confirm Self-Modification", "!!! WARNING !!!\nThis rollback will modify your own permissions. Are you sure?"):
-            logging.warning("Rollback cancelled by user due to self-modification warning.")
-            return
+            self.hide_progress()
+            return logging.warning("Rollback cancelled by user.")
 
+        is_live = self.rollback_live_var.get()
         if messagebox.askyesno("Confirm Rollback", f"This will affect {num_affected} item(s).\nMode: {'LIVE' if is_live else 'Dry Run'}\nProceed?"):
-            self.run_in_thread(execute_rollback, plan, live_data, root_id, is_live)
+            self.show_progress(initial_message="Executing rollback...")
+            self.run_in_thread(self._execute_rollback_worker, plan, live_data, root_id, is_live)
         else:
+            self.hide_progress()
             logging.warning("Rollback cancelled by user.")
+    
+    def _execute_rollback_worker(self, plan, live_data, root_id, is_live):
+        execute_rollback(plan, live_data, root_id, is_live, progress_callback=self.update_progress)
+        self.after(0, self.hide_progress)
 
     def on_reset_auth(self):
         if messagebox.askyesno("Confirm Action", "This will log you out. Are you sure?"):

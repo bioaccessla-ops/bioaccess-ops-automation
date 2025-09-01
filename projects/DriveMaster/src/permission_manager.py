@@ -29,14 +29,16 @@ def generate_rollback_actions(audit_log_path, live_report_data, auth_user_email)
     if successful_actions_df.empty:
         logging.info("No successful actions found in the log to roll back."); return [], False
 
-    item_metadata_map = {item['Item ID']: {'Item Name': item['Item Name'], 'Full Path': item['Full Path']} for item in live_report_data}
+    item_name_map = {item['Item ID']: item['Item Name'] for item in live_report_data}
     root_folder_id = live_report_data[0]['Root Folder ID'] if live_report_data else ''
 
     actions_to_perform = []
     for _, log_entry in successful_actions_df.iterrows():
         item_id, cmd = str(log_entry['Item ID']), str(log_entry['Action_Command'])
-        metadata = item_metadata_map.get(item_id, {'Item Name': 'N/A', 'Full Path': 'N/A'})
-        action = {'Item ID': item_id, 'Full Path': metadata['Full Path'], 'Item Name': metadata['Item Name'], 'Root Folder ID': root_folder_id}
+        
+        item_name = item_name_map.get(item_id, 'N/A')
+        full_path = log_entry.get('Full Path', 'N/A')
+        action = {'Item ID': item_id, 'Full Path': full_path, 'Item Name': item_name, 'Root Folder ID': root_folder_id}
         
         original_email = str(log_entry.get('Original_Email_Address', '')).lower()
         new_email = str(log_entry.get('New_Email_Address', '')).lower()
@@ -98,18 +100,22 @@ def plan_changes(input_df, live_data_df, auth_user_email):
         
     return action_plan, self_modification_detected
 
-def process_changes(drive_service, plan, root_folder_id, dry_run=True):
+def process_changes(drive_service, plan, root_folder_id, dry_run=True, progress_callback=None):
     if not dry_run:
         logging.warning("--- Starting Live Mode: Changes WILL be applied to Google Drive. ---")
     else:
         logging.info("--- Starting Dry Run: No changes will be made. ---")
 
     audit_trail = []
+    total_actions = len(plan)
     if not plan:
         logging.info("Execution plan is empty. No changes to process.")
         return audit_trail, root_folder_id
 
-    for action in plan:
+    for i, action in enumerate(plan):
+        if progress_callback:
+            progress_callback(i + 1, total_actions)
+
         cmd = str(action.get('Action_Type')).strip().upper()
         item_id = str(action.get('Item ID'))
         
