@@ -20,18 +20,19 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        # Corrected path to requirements.txt
         pip install -r projects/DriveMaster/requirements.txt
 
     - name: Build executable with PyInstaller
+      # --- THIS IS THE CRUCIAL CHANGE ---
+      # We tell this step to run from inside the DriveMaster project folder
+      working-directory: ./projects/DriveMaster
       run: |
-        # Corrected path to main.spec
-        python -m PyInstaller projects/DriveMaster/main.spec
+        python -m PyInstaller main.spec
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: DriveMaster-Executable
-        # Corrected path to the final executable
+        # The path is now relative to the working directory set above
         path: projects/DriveMaster/dist/main.exe
 

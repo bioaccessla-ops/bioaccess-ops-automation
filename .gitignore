@@ -194,7 +194,7 @@ cython_debug/
 .cursorindexingignore
 
 # Google Drive Service Account Key
-credentials
+#credentials
 
 # Google Credentials
 credentials.json
