@@ -1,10 +1,14 @@
 import logging
+import time
+import random
 from googleapiclient.errors import HttpError
 from src.config import ROLE_MAP
 from src.batch_handler import execute_requests_in_batches
 
-def list_files_recursively(drive_service, folder_id, current_path=""):
-    """Recursively lists all files and folders under a folder ID, building their full path."""
+def list_files_recursively(drive_service, folder_id, current_path="", max_retries=5):
+    """
+    Recursively lists all files and folders under a folder ID with robust retry logic.
+    """
     all_items = []
     page_token = None
     try:
@@ -13,24 +17,34 @@ def list_files_recursively(drive_service, folder_id, current_path=""):
     except HttpError as e:
         logging.error(f"Could not retrieve metadata for folder ID {folder_id}: {e}")
         return []
-    
+
     while True:
+        retries = 0
         try:
             query = f"'{folder_id}' in parents and trashed=false"
             fields = 'nextPageToken, files(id,name,mimeType)'
             response = drive_service.files().list(q=query, fields=fields, pageSize=1000, pageToken=page_token).execute()
+            
             files = response.get('files', [])
             for item in files:
                 item['path'] = f"{current_path}/{item.get('name', 'Untitled')}"
                 all_items.append(item)
                 if item.get('mimeType') == 'application/vnd.google-apps.folder':
                     all_items.extend(list_files_recursively(drive_service, item['id'], current_path=current_path))
+            
             page_token = response.get('nextPageToken')
             if not page_token:
                 break
+            
         except HttpError as e:
-            logging.error(f"Failed to list files for folder {folder_id}: {e}")
-            break
+            if e.resp.status in [500, 502, 503, 504] and retries < max_retries:
+                wait = (2 ** retries) + random.random()
+                logging.warning(f"File list for {folder_id} failed with status {e.resp.status}. Retrying in {wait:.1f}s... ({retries + 1}/{max_retries})")
+                time.sleep(wait)
+                retries += 1
+            else:
+                logging.error(f"Failed to list files for folder {folder_id} after {max_retries} retries: {e}")
+                break # Exit loop on persistent error
     return all_items
 
 def get_report_for_items(drive_service, item_ids, progress_callback=None):
@@ -40,7 +54,8 @@ def get_report_for_items(drive_service, item_ids, progress_callback=None):
     total_items = len(item_ids)
     logging.info(f"Preparing to fetch data for {total_items} items using batch requests...")
     if progress_callback:
-        progress_callback(0, total_items * 2) # Total steps is 2x items (metadata + permissions)
+        # Total steps is 2 batches (metadata + permissions)
+        progress_callback(0, total_items * 2) 
 
     # Step 1: Batch fetch file metadata
     metadata_requests = [
@@ -67,7 +82,7 @@ def get_report_for_items(drive_service, item_ids, progress_callback=None):
         permissions_response = permission_results[i]
 
         if not item:
-            logging.error(f"Could not retrieve metadata for item ID {item_id}, skipping.")
+            logging.error(f"Failed to fetch data for item ID {item_id}, skipping.")
             continue
 
         is_restricted = "N/A"
@@ -114,5 +129,5 @@ def generate_permission_report(drive_service, folder_id, user_email=None, progre
     path_map = {item['id']: item['path'] for item in all_items}
     for row in report_data:
         row['Full Path'] = path_map.get(row['Item ID'], 'N/A')
-        
+            
     return report_data

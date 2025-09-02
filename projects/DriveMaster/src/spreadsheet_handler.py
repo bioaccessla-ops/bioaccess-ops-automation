@@ -51,8 +51,8 @@ def add_dropdowns_to_sheet(filename):
         dv_principal = DataValidation(type="list", formula1='"user,group,domain"', allow_blank=True)
         
         # Columns shifted due to new 'Mime Type' column
-        dv_action.add('L2:L1048576')      # Action_Type
-        dv_role.add('M2:M1048576')        # New_Role
+        dv_action.add('L2:L1048576')       # Action_Type
+        dv_role.add('M2:M1048576')         # New_Role
         dv_principal.add('N2:N1048576')   # Type of account (for ADD)
         dv_set_restrict.add('P2:P1048576') # SET Download Restriction
         
@@ -74,12 +74,12 @@ def add_dropdowns_to_sheet(filename):
         logging.info(f"Successfully added auto-filter, dropdowns, and formatting to {filename}")
     except Exception as e:
         logging.error(f"Could not add dropdowns or formatting to {filename}. Reason: {e}")
-        raise
+        # Do not re-raise; allow the process to continue if this non-critical step fails.
 
 def write_report_to_excel(report_data, filename):
     """
     Writes the report data to an Excel file.
-    This function will now raise exceptions (like PermissionError) for the GUI to handle.
+    This function will raise exceptions (like PermissionError) for the GUI to handle.
     """
     if not report_data:
         logging.warning("No data to write to Excel report.")

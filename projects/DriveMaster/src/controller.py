@@ -3,20 +3,22 @@ import os
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
-import time # Import the time module
+import time
 
 from src.auth import authenticate_and_get_service
 from src.report_generator import generate_permission_report, get_report_for_items
-from src.spreadsheet_handler import write_report_to_csv, write_report_to_excel, save_audit_log
+from src.spreadsheet_handler import write_report_to_csv, save_audit_log
 from src.permission_manager import process_changes, generate_rollback_actions, plan_changes
 
 def _setup_project_directories():
+    """Ensures that all necessary output directories exist."""
     Path("./reports").mkdir(exist_ok=True)
     Path("./archives").mkdir(exist_ok=True)
     Path("./logs").mkdir(exist_ok=True)
 
 def _sanitize_filename(name):
-    name = str(name); sanitized_name = name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+    name = str(name)
+    sanitized_name = name.replace(' ', '_').replace('/', '_').replace('\\', '_')
     return "".join(c for c in sanitized_name if c.isalnum() or c in ('_', '-')).strip() or "unnamed_item"
 
 def _get_item_name(service, item_id):
@@ -24,28 +26,34 @@ def _get_item_name(service, item_id):
         response = service.files().get(fileId=item_id, fields='name').execute()
         return response.get('name', 'UnknownItem')
     except Exception as e:
-        logging.error(f"Could not retrieve name for item ID {item_id}: {e}"); return "UnknownItem"
+        logging.error(f"Could not retrieve name for item ID {item_id}: {e}")
+        return "UnknownItem"
 
 def run_fetch(folder_id, user_email=None, progress_callback=None):
     _setup_project_directories()
     logging.info("--- Authenticating for Fetch ---")
     service, _ = authenticate_and_get_service()
-    if not service: 
+    if not service:
         logging.critical("Authentication failed.")
-        return None, None
-    
+        return None
+
     logging.info(f"Starting 'fetch' command for folder ID: {folder_id}")
     root_folder_name = _sanitize_filename(_get_item_name(service, folder_id))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     report_data = generate_permission_report(service, folder_id, user_email, progress_callback)
     
-    if not report_data: 
+    if report_data is None: # Check for failure from the generator
+        return None
+    
+    if not report_data:
         logging.warning("No permissions data found to generate a report.")
-        return [], None
+        # Return empty list and a valid path to indicate success with no data
+        output_path = os.path.join('reports', f"permissions_editor_{root_folder_name}.xlsx")
+        return [], output_path
 
     if write_report_to_csv(report_data, os.path.join('archives', f"{timestamp}_fetch_{root_folder_name}_baseline.csv")):
-        logging.info(f"Successfully created baseline archive.")
+        logging.info("Successfully created baseline archive.")
 
     output_path = os.path.join('reports', f"permissions_editor_{root_folder_name}.xlsx")
     return report_data, output_path
@@ -55,7 +63,8 @@ def prepare_apply_changes(excel_path, progress_callback=None):
     logging.info("--- Preparing to Apply Changes (On-Demand) ---")
     service, auth_user_email = authenticate_and_get_service()
     if not service:
-        logging.critical("Authentication failed during preparation."); return None, None, None, False
+        logging.critical("Authentication failed during preparation.")
+        return None
 
     try:
         t_read_start = time.time()
@@ -73,7 +82,8 @@ def prepare_apply_changes(excel_path, progress_callback=None):
             return [], [], root_id, False
 
     except Exception as e:
-        logging.error(f"Failed to read or validate Excel file {excel_path}: {e}"); return None, None, None, False
+        logging.error(f"Failed to read or validate Excel file {excel_path}: {e}")
+        return None
 
     t_fetch_start = time.time()
     logging.info(f"On-demand fetch: getting live data for {len(item_ids_to_check)} items.")
@@ -92,13 +102,14 @@ def execute_apply_changes(plan, live_report_data, root_id, is_live_run, progress
     logging.info("--- Executing Apply Changes ---")
     service, _ = authenticate_and_get_service()
     if not service:
-        logging.critical("Authentication failed during execution."); return False
+        logging.critical("Authentication failed during execution.")
+        return False
 
     root_folder_name = _sanitize_filename(_get_item_name(service, root_id))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     if write_report_to_csv(live_report_data, os.path.join('archives', f"{timestamp}_apply_{root_folder_name}_pre_changes.csv")):
-        logging.info(f"Successfully created pre-apply changes archive.")
+        logging.info("Successfully created pre-apply changes archive.")
 
     audit_trail, _ = process_changes(service, plan=plan, root_folder_id=root_id, dry_run=not is_live_run, progress_callback=progress_callback)
     
@@ -113,7 +124,8 @@ def prepare_rollback(log_file_path, root_id_override=None, progress_callback=Non
     logging.info("--- Preparing Rollback (On-Demand) ---")
     service, auth_user_email = authenticate_and_get_service()
     if not service:
-        logging.critical("Authentication failed during preparation."); return None, None, None, False
+        logging.critical("Authentication failed during preparation.")
+        return None
 
     try:
         t_read_start = time.time()
@@ -124,12 +136,13 @@ def prepare_rollback(log_file_path, root_id_override=None, progress_callback=Non
             logging.info("No actions found in the audit log to roll back.")
             return [], [], None, False
         
-        item_ids_to_check = audit_log_df['Item ID'].unique().tolist()
+        item_ids_to_check = audit_log_df[audit_log_df['Status'] == 'SUCCESS']['Item ID'].unique().tolist()
         root_id_from_log = audit_log_df.iloc[0]['Root Folder ID']
         logging.info(f"PERF: Reading audit log took {time.time() - t_read_start:.2f} seconds.")
             
     except Exception as e:
-        logging.error(f"Failed to read or process audit log '{log_file_path}': {e}"); return None, None, None, False
+        logging.error(f"Failed to read or process audit log '{log_file_path}': {e}")
+        return None
     
     actual_root_id = root_id_override or root_id_from_log
     
@@ -149,13 +162,14 @@ def execute_rollback(plan, live_report_data, root_id, is_live_run, progress_call
     logging.info("--- Executing Rollback ---")
     service, _ = authenticate_and_get_service()
     if not service:
-        logging.critical("Authentication failed during execution."); return False
+        logging.critical("Authentication failed during execution.")
+        return False
 
     root_folder_name = _sanitize_filename(_get_item_name(service, root_id))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     if write_report_to_csv(live_report_data, os.path.join('archives', f"{timestamp}_rollback_{root_folder_name}_pre_rollback.csv")):
-        logging.info(f"Successfully created pre-rollback archive.")
+        logging.info("Successfully created pre-rollback archive.")
     
     audit_trail, _ = process_changes(service, plan=plan, root_folder_id=root_id, dry_run=not is_live_run, progress_callback=progress_callback)
     

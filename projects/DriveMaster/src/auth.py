@@ -1,3 +1,4 @@
+# auth.py
 import os
 import sys
 import logging
@@ -13,6 +14,7 @@ import google_auth_httplib2 # Import the authorization bridge
 def _get_resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
@@ -63,7 +65,11 @@ def authenticate_and_get_service():
     try:
         http_obj = httplib2.Http(cache=None)
         authed_http = google_auth_httplib2.AuthorizedHttp(creds, http=http_obj)
-        service = build('drive', 'v3', http=authed_http, cache_discovery=False)
+        
+        # --- THIS IS THE KEY CHANGE ---
+        # By removing `cache_discovery=False`, we use the modern, static discovery
+        # method, which is faster and does not depend on the problematic `pkg_resources` library.
+        service = build('drive', 'v3', http=authed_http)
         
         about = service.about().get(fields='user').execute()
         user_email = about.get('user', {}).get('emailAddress')
@@ -91,3 +97,4 @@ def reset_authentication():
     except Exception as e:
         logging.error(f"Failed to delete token file at {TOKEN_FILE}: {e}")
         return False
+

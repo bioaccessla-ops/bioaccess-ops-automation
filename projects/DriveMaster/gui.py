@@ -7,7 +7,7 @@ import os
 from PIL import Image, ImageTk
 
 from src.controller import run_fetch, prepare_apply_changes, execute_apply_changes, prepare_rollback, execute_rollback
-from src.auth import authenticate_and_get_service, reset_authentication
+from src.auth import reset_authentication
 from src.spreadsheet_handler import write_report_to_excel
 
 class GuiHandler(logging.Handler):
@@ -77,8 +77,11 @@ class App(tk.Tk):
         ttk.Label(frame, text="Google Drive Folder ID:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         self.fetch_id_var = tk.StringVar()
         ttk.Entry(frame, textvariable=self.fetch_id_var).grid(row=0, column=1, sticky="ew", padx=5)
+        ttk.Label(frame, text="Optional User Email:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        self.fetch_email_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.fetch_email_var).grid(row=1, column=1, sticky="ew", padx=5)
         self.fetch_button = ttk.Button(frame, text="Run Fetch", command=self.on_fetch)
-        self.fetch_button.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+        self.fetch_button.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         frame.columnconfigure(1, weight=1)
 
     def create_apply_widgets(self):
@@ -122,7 +125,7 @@ class App(tk.Tk):
 
     def create_output_widgets(self):
         self.progress_frame.pack(fill="x", pady=5)
-        self.progress_frame.pack_forget()
+        self.progress_frame.pack_forget() 
         frame = ttk.LabelFrame(self.scrollable_frame, text="Output Log", padding="10")
         frame.pack(fill="both", expand=True, pady=5)
         button_frame = ttk.Frame(frame)
@@ -178,15 +181,17 @@ class App(tk.Tk):
         if not folder_id: return messagebox.showerror("Error", "Please enter a Folder ID.")
         
         self.show_progress()
-        self.run_in_thread(self._fetch_worker, folder_id)
+        self.run_in_thread(self._fetch_worker, folder_id, self.fetch_email_var.get() or None)
 
-    def _fetch_worker(self, folder_id):
-        report_data, output_path = run_fetch(folder_id, progress_callback=self.update_progress)
-        self.after(0, self._on_fetch_complete, report_data, output_path)
+    def _fetch_worker(self, folder_id, user_email):
+        result = run_fetch(folder_id, user_email, progress_callback=self.update_progress)
+        self.after(0, self._on_fetch_complete, result)
 
-    def _on_fetch_complete(self, report_data, output_path):
+    def _on_fetch_complete(self, result):
         self.hide_progress()
-        if report_data is None: return
+        if result is None: return 
+        
+        report_data, output_path = result
         if not report_data: return logging.info("--- Fetch complete (no data to write) ---")
 
         while True:
@@ -212,14 +217,15 @@ class App(tk.Tk):
         self.run_in_thread(self._apply_prepare_worker, excel_file)
 
     def _apply_prepare_worker(self, excel_file):
-        plan, live_data, root_id, self_mod_flag = prepare_apply_changes(excel_file, progress_callback=self.update_progress)
-        self.after(0, self._on_apply_prepare_complete, plan, live_data, root_id, self_mod_flag)
+        result = prepare_apply_changes(excel_file, progress_callback=self.update_progress)
+        self.after(0, self._on_apply_prepare_complete, result)
 
-    def _on_apply_prepare_complete(self, plan, live_data, root_id, self_mod_flag):
-        if plan is None:
+    def _on_apply_prepare_complete(self, result):
+        if result is None:
             self.hide_progress()
             return
 
+        plan, live_data, root_id, self_mod_flag = result
         num_affected = len({action['Item ID'] for action in plan})
         if num_affected == 0:
             self.hide_progress()
@@ -250,14 +256,15 @@ class App(tk.Tk):
         self.run_in_thread(self._rollback_prepare_worker, log_file)
 
     def _rollback_prepare_worker(self, log_file):
-        plan, live_data, root_id, self_mod_flag = prepare_rollback(log_file, progress_callback=self.update_progress)
-        self.after(0, self._on_rollback_prepare_complete, plan, live_data, root_id, self_mod_flag)
+        result = prepare_rollback(log_file, progress_callback=self.update_progress)
+        self.after(0, self._on_rollback_prepare_complete, result)
 
-    def _on_rollback_prepare_complete(self, plan, live_data, root_id, self_mod_flag):
-        if plan is None:
+    def _on_rollback_prepare_complete(self, result):
+        if result is None:
             self.hide_progress()
             return
         
+        plan, live_data, root_id, self_mod_flag = result
         num_affected = len({action['Item ID'] for action in plan})
         if num_affected == 0:
             self.hide_progress()
@@ -289,3 +296,4 @@ class App(tk.Tk):
 if __name__ == "__main__":
     app = App()
     app.mainloop()
+
