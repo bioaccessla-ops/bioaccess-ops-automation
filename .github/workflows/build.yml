@@ -27,7 +27,9 @@ jobs:
         python -m PyInstaller main.spec
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      # --- THIS LINE IS UPDATED ---
+      uses: actions/upload-artifact@v4
       with:
         name: DriveMaster-Executable
         path: dist/main.exe
+
