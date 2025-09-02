@@ -24,11 +24,14 @@ TOKEN_FILE = os.path.join(CREDENTIALS_DIR_PATH, 'token.json')
 CREDENTIALS_FILE = os.path.join(CREDENTIALS_DIR_PATH, 'credentials_DeskApp.json')
 
 def authenticate_and_get_service():
-    """ Handles the OAuth 2.0 Installed Application flow. """
+    """ 
+    Handles the OAuth 2.0 flow.
+    Returns a tuple: (drive_service, authenticated_user_email) or (None, None) on failure.
+    """
     os.makedirs(CREDENTIALS_DIR_PATH, exist_ok=True)
     
     if not os.path.exists(CREDENTIALS_FILE):
-        logging.critical(f"FATAL: Client secrets file not found at '{CREDENTIALS_FILE}'. Please set it up."); return None
+        logging.critical(f"FATAL: Client secrets file not found at '{CREDENTIALS_FILE}'. Please set it up."); return None, None
 
     creds = None
     if os.path.exists(TOKEN_FILE):
@@ -55,16 +58,23 @@ def authenticate_and_get_service():
                 with open(TOKEN_FILE, 'w') as token: token.write(creds.to_json())
                 logging.info(f"Token saved to {TOKEN_FILE}")
             except Exception as e:
-                logging.error(f"\n---Authentication flow failed or timed out. (Error: {e})---\n"); return None
+                logging.error(f"\n---Authentication flow failed or timed out. (Error: {e})---\n"); return None, None
 
     try:
         http_obj = httplib2.Http(cache=None)
         authed_http = google_auth_httplib2.AuthorizedHttp(creds, http=http_obj)
         service = build('drive', 'v3', http=authed_http, cache_discovery=False)
-        logging.info("Google Drive service created successfully (ALL caching disabled).")
-        return service
+        
+        about = service.about().get(fields='user').execute()
+        user_email = about.get('user', {}).get('emailAddress')
+        if not user_email:
+            logging.error("Could not determine the authenticated user's email address.")
+            return None, None
+        logging.info(f"Authenticated successfully as: {user_email}")
+        
+        return service, user_email
     except Exception as e:
-        logging.error(f"Failed to build Drive service: {e}"); return None
+        logging.error(f"Failed to build Drive service or get user info: {e}"); return None, None
 
 def reset_authentication():
     """
